@@ -32,6 +32,18 @@ namespace Panda
             AssertEqual("C", filtered.Headers[0], "selected column order");
             AssertEqual("a2", filtered.Rows[1][1], "selected column values");
 
+            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False" });
+            AssertEqual(6, settings.DefaultShift, "settings default shift");
+            AssertEqual(false, settings.ConfirmBeforeShift, "settings confirmation flag");
+            var boundedSettings = AppSettings.Parse(new[] { "DefaultShift=99" });
+            AssertEqual(25, boundedSettings.DefaultShift, "settings upper bound");
+            AssertEqual("DefaultShift=6", settings.Serialize()[0], "settings serialization");
+            string confirmationUp = MainForm.BuildConfirmationMessage(6, 12, false);
+            AssertEqual(true, confirmationUp.Contains("Die ausgewählten Werte werden um 6 hochgezählt."), "confirmation count up text");
+            AssertEqual(true, confirmationUp.Contains("Betroffene Zellen: 12"), "confirmation affected cells");
+            string confirmationDown = MainForm.BuildConfirmationMessage(-4, 20, true);
+            AssertEqual(true, confirmationDown.Contains("Alle Werte werden um 4 runtergezählt."), "confirmation count down text");
+
             string tempPath = Path.Combine(Path.GetTempPath(), "csv-buchstaben-test-" + Guid.NewGuid().ToString("N") + ".csv");
             try
             {

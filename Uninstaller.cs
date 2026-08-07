@@ -10,8 +10,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Deinstallationsprogramm für PANDA")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace PandaUninstall
 {

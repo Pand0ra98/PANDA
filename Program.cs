@@ -11,8 +11,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace Panda
 {
@@ -54,6 +54,22 @@ namespace Panda
                         bitmap.Save(args[2], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     wizard.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--settings-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                var previewSettings = new AppSettings { DefaultShift = 6, ConfirmBeforeShift = true };
+                using (var settingsForm = new SettingsForm(previewSettings))
+                {
+                    settingsForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(settingsForm.Width, settingsForm.Height))
+                    {
+                        settingsForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, settingsForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    settingsForm.Close();
                 }
                 return;
             }
@@ -311,6 +327,227 @@ namespace Panda
         {
             int shifted = ((value - start + amount) % length + length) % length;
             return (char)(start + shifted);
+        }
+    }
+
+    internal sealed class AppSettings
+    {
+        public int DefaultShift = 1;
+        public bool ConfirmBeforeShift = true;
+
+        private static string SettingsPath
+        {
+            get
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PANDA", "settings.ini");
+            }
+        }
+
+        public static AppSettings Load()
+        {
+            try
+            {
+                if (File.Exists(SettingsPath))
+                    return Parse(File.ReadAllLines(SettingsPath));
+            }
+            catch
+            {
+            }
+            return new AppSettings();
+        }
+
+        public void Save()
+        {
+            string directory = Path.GetDirectoryName(SettingsPath);
+            if (!Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+            File.WriteAllLines(SettingsPath, Serialize(), new UTF8Encoding(false));
+        }
+
+        internal static AppSettings Parse(IEnumerable<string> lines)
+        {
+            var settings = new AppSettings();
+            foreach (string line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#"))
+                    continue;
+                int separator = line.IndexOf('=');
+                if (separator <= 0)
+                    continue;
+                string key = line.Substring(0, separator).Trim();
+                string value = line.Substring(separator + 1).Trim();
+                if (string.Equals(key, "DefaultShift", StringComparison.OrdinalIgnoreCase))
+                {
+                    int parsed;
+                    if (int.TryParse(value, out parsed))
+                        settings.DefaultShift = Math.Max(1, Math.Min(25, parsed));
+                }
+                else if (string.Equals(key, "ConfirmBeforeShift", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool parsed;
+                    if (bool.TryParse(value, out parsed))
+                        settings.ConfirmBeforeShift = parsed;
+                }
+            }
+            return settings;
+        }
+
+        internal string[] Serialize()
+        {
+            return new[]
+            {
+                "DefaultShift=" + DefaultShift,
+                "ConfirmBeforeShift=" + ConfirmBeforeShift
+            };
+        }
+    }
+
+    internal sealed class SettingsForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly NumericUpDown defaultShiftNumeric = new NumericUpDown();
+        private readonly CheckBox confirmationCheckBox = new CheckBox();
+
+        public int DefaultShift { get { return (int)defaultShiftNumeric.Value; } }
+        public bool ConfirmBeforeShift { get { return confirmationCheckBox.Checked; } }
+
+        public SettingsForm(AppSettings settings)
+        {
+            Text = "PANDA – Einstellungen";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ClientSize = new Size(560, 330);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout(settings);
+        }
+
+        private void BuildLayout(AppSettings settings)
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Einstellungen",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Lege die Standardwerte für zukünftige Umwandlungen fest.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var card = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 4,
+                BackColor = Color.White,
+                Padding = new Padding(18, 14, 18, 14),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            var shiftLabel = new Label
+            {
+                Text = "Standard-Zählwert",
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            card.Controls.Add(shiftLabel, 0, 0);
+            card.SetColumnSpan(shiftLabel, 2);
+            card.Controls.Add(new Label
+            {
+                Text = "Dieser Wert wird beim Programmstart und nach dem Speichern voreingestellt.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 1);
+            defaultShiftNumeric.Minimum = 1;
+            defaultShiftNumeric.Maximum = 25;
+            defaultShiftNumeric.Value = Math.Max(1, Math.Min(25, settings.DefaultShift));
+            defaultShiftNumeric.TextAlign = HorizontalAlignment.Center;
+            defaultShiftNumeric.Dock = DockStyle.Fill;
+            defaultShiftNumeric.Margin = new Padding(8, 5, 0, 5);
+            card.Controls.Add(defaultShiftNumeric, 1, 1);
+            confirmationCheckBox.Text = "Vor jeder Umwandlung eine Bestätigung mit dem gewählten Zählwert anzeigen";
+            confirmationCheckBox.Checked = settings.ConfirmBeforeShift;
+            confirmationCheckBox.AutoSize = true;
+            confirmationCheckBox.ForeColor = Navy;
+            confirmationCheckBox.Anchor = AnchorStyles.Left;
+            card.SetColumnSpan(confirmationCheckBox, 2);
+            card.Controls.Add(confirmationCheckBox, 0, 3);
+            root.Controls.Add(card, 0, 1);
+
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                Padding = new Padding(0, 10, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            var cancelButton = new Button
+            {
+                Text = "Abbrechen",
+                DialogResult = DialogResult.Cancel,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = Navy,
+                Margin = new Padding(0)
+            };
+            cancelButton.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            var saveButton = new Button
+            {
+                Text = "Speichern",
+                DialogResult = DialogResult.OK,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Blue,
+                ForeColor = Color.White,
+                Margin = new Padding(0)
+            };
+            saveButton.FlatAppearance.BorderSize = 0;
+            footer.Controls.Add(cancelButton, 1, 0);
+            footer.Controls.Add(saveButton, 3, 0);
+            root.Controls.Add(footer, 0, 2);
+            AcceptButton = saveButton;
+            CancelButton = cancelButton;
         }
     }
 
@@ -683,9 +920,11 @@ namespace Panda
         private readonly Label fileLabel = new Label();
         private readonly Button exportButton = new Button();
         private readonly Button resetButton = new Button();
+        private readonly Button settingsButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
+        private AppSettings appSettings = AppSettings.Load();
 
         public MainForm()
         {
@@ -742,7 +981,7 @@ namespace Panda
             var toolbar = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 8,
+                ColumnCount = 9,
                 RowCount = 2,
                 Padding = new Padding(12, 10, 12, 8),
                 BackColor = Color.White,
@@ -755,6 +994,7 @@ namespace Panda
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 122));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -773,7 +1013,7 @@ namespace Panda
 
             stepNumeric.Minimum = 1;
             stepNumeric.Maximum = 25;
-            stepNumeric.Value = 1;
+            stepNumeric.Value = Math.Max(1, Math.Min(25, appSettings.DefaultShift));
             stepNumeric.Dock = DockStyle.Fill;
             stepNumeric.TextAlign = HorizontalAlignment.Center;
             stepNumeric.Margin = new Padding(7, 3, 7, 3);
@@ -797,6 +1037,11 @@ namespace Panda
             exportButton.Click += delegate { ExportCsv(); };
             toolbar.Controls.Add(exportButton, 6, 0);
 
+            settingsButton.Text = "Einstellungen";
+            StyleSecondaryButton(settingsButton);
+            settingsButton.Click += delegate { OpenSettings(); };
+            toolbar.Controls.Add(settingsButton, 7, 0);
+
             fileLabel.Text = "Noch keine CSV geladen";
             fileLabel.ForeColor = Muted;
             fileLabel.AutoEllipsis = true;
@@ -813,7 +1058,7 @@ namespace Panda
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleRight
             };
-            toolbar.SetColumnSpan(hint, 4);
+            toolbar.SetColumnSpan(hint, 5);
             toolbar.Controls.Add(hint, 4, 1);
 
             var grids = new TableLayoutPanel
@@ -892,6 +1137,29 @@ namespace Panda
             button.Cursor = Cursors.Hand;
             button.Margin = new Padding(4, 2, 4, 2);
             button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void OpenSettings()
+        {
+            using (var dialog = new SettingsForm(appSettings))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                appSettings.DefaultShift = dialog.DefaultShift;
+                appSettings.ConfirmBeforeShift = dialog.ConfirmBeforeShift;
+                try
+                {
+                    appSettings.Save();
+                    stepNumeric.Value = appSettings.DefaultShift;
+                    statusLabel.Text = "Einstellungen gespeichert. Standard-Zählwert: " + appSettings.DefaultShift + ".";
+                    statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Die Einstellungen konnten nicht gespeichert werden.\r\n\r\n" + exception.Message, "Speichern fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         private void ConfigureGrid(DataGridView grid, bool selectable)
@@ -1104,6 +1372,18 @@ namespace Panda
                 return;
             }
 
+            if (appSettings.ConfirmBeforeShift)
+            {
+                string message = BuildConfirmationMessage(amount, cells.Count, scopeComboBox.SelectedIndex == 2);
+                DialogResult confirmation = MessageBox.Show(this, message, "Umwandlung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (confirmation != DialogResult.Yes)
+                {
+                    statusLabel.Text = "Umwandlung abgebrochen.";
+                    statusLabel.ForeColor = Muted;
+                    return;
+                }
+            }
+
             int changed = 0;
             foreach (var coordinate in cells)
             {
@@ -1117,6 +1397,16 @@ namespace Panda
 
             statusLabel.Text = changed + " von " + cells.Count + " Zellen verändert (" + (amount > 0 ? "+" : string.Empty) + amount + ").";
             statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+        }
+
+        internal static string BuildConfirmationMessage(int amount, int cellCount, bool allValues)
+        {
+            string subject = allValues ? "Alle Werte" : "Die ausgewählten Werte";
+            string direction = amount > 0 ? "hochgezählt" : "runtergezählt";
+            return subject + " werden um " + Math.Abs(amount) + " " + direction + ".\r\n\r\n"
+                + "Gewählter Zählwert: " + Math.Abs(amount) + "\r\n"
+                + "Betroffene Zellen: " + cellCount + "\r\n\r\n"
+                + "Möchtest du die Umwandlung durchführen?";
         }
 
         private List<Tuple<int, int>> GetTargetCells()

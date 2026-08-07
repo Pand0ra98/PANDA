@@ -29,6 +29,12 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 6. Schrittweite festlegen und **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
 7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern.
 
+## Einstellungen
+
+Über **Einstellungen** lässt sich der Standard-Zählwert von 1 bis 25 festlegen. Dieser Wert wird benutzerbezogen gespeichert und beim nächsten Programmstart wiederhergestellt.
+
+Standardmäßig zeigt PANDA vor jeder Umwandlung eine Bestätigung mit Richtung, gewähltem Zählwert und Anzahl der betroffenen Zellen. Diese Abfrage kann im Einstellungsfenster deaktiviert werden.
+
 Auswahlmarkierungen werden ausschließlich in der linken Originaltabelle dargestellt.
 
 Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen, Satzzeichen und Umlaute bleiben unverändert.
