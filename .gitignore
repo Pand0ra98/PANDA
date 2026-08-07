@@ -1,0 +1,23 @@
+# Kompilierte Ausgaben
+PANDA-Portable.exe
+PANDA-Setup.exe
+PANDA.Tests.exe
+PANDA-Uninstall.Payload.exe
+*.pdb
+
+# Automatisch erzeugte Oberflächenvorschauen
+panda-preview.png
+panda-import-assistent.png
+panda-setup.png
+
+# Lokale Exporte und temporäre Tests
+export.csv
+*_veraendert.csv
+portable-test/
+
+# Editor- und Betriebssystemdateien
+.vs/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini

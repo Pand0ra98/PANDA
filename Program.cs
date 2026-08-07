@@ -1,0 +1,1250 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Windows.Forms;
+
+[assembly: AssemblyTitle("PANDA")]
+[assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
+[assembly: AssemblyProduct("PANDA")]
+[assembly: AssemblyCompany("PANDA")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
+
+namespace Panda
+{
+    internal static class Program
+    {
+        [STAThread]
+        private static void Main(string[] args)
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            if (args.Length == 2 && string.Equals(args[0], "--screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var form = new MainForm())
+                {
+                    form.Size = new Size(1320, 820);
+                    form.Show();
+                    form.LoadPreviewData();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(form.Width, form.Height))
+                    {
+                        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    form.Close();
+                }
+                return;
+            }
+            if (args.Length == 3 && string.Equals(args[0], "--wizard-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var wizard = new ImportWizardForm(args[1]))
+                {
+                    wizard.Show();
+                    Application.DoEvents();
+                    wizard.UncheckLastColumnForPreview();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(wizard.Width, wizard.Height))
+                    {
+                        wizard.DrawToBitmap(bitmap, new Rectangle(Point.Empty, wizard.Size));
+                        bitmap.Save(args[2], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    wizard.Close();
+                }
+                return;
+            }
+            Application.Run(new MainForm());
+        }
+    }
+
+    internal sealed class CsvDocument
+    {
+        public List<string> Headers = new List<string>();
+        public List<List<string>> Rows = new List<List<string>>();
+        public char Delimiter;
+        public bool FirstRowIsHeader;
+    }
+
+    internal static class CsvCodec
+    {
+        public static CsvDocument Load(string path, bool firstRowIsHeader)
+        {
+            string text;
+            using (var reader = new StreamReader(path, Encoding.UTF8, true))
+                text = reader.ReadToEnd();
+
+            char delimiter = DetectDelimiter(text);
+            var records = Parse(text, delimiter);
+            var document = new CsvDocument
+            {
+                Delimiter = delimiter,
+                FirstRowIsHeader = firstRowIsHeader
+            };
+
+            int columnCount = records.Count == 0 ? 0 : records.Max(row => row.Count);
+            if (firstRowIsHeader && records.Count > 0)
+            {
+                for (int column = 0; column < columnCount; column++)
+                {
+                    string value = column < records[0].Count ? records[0][column] : string.Empty;
+                    document.Headers.Add(string.IsNullOrWhiteSpace(value) ? "Spalte " + (column + 1) : value);
+                }
+                records.RemoveAt(0);
+            }
+            else
+            {
+                for (int column = 0; column < columnCount; column++)
+                    document.Headers.Add("Spalte " + (column + 1));
+            }
+
+            foreach (var record in records)
+            {
+                while (record.Count < columnCount)
+                    record.Add(string.Empty);
+                document.Rows.Add(record);
+            }
+
+            return document;
+        }
+
+        public static void Save(string path, CsvDocument document, IList<IList<string>> rows)
+        {
+            using (var writer = new StreamWriter(path, false, new UTF8Encoding(true)))
+            {
+                if (document.FirstRowIsHeader)
+                    WriteRecord(writer, document.Headers, document.Delimiter);
+
+                foreach (var row in rows)
+                    WriteRecord(writer, row, document.Delimiter);
+            }
+        }
+
+        public static CsvDocument SelectColumns(CsvDocument source, IList<int> selectedColumns)
+        {
+            var result = new CsvDocument
+            {
+                Delimiter = source.Delimiter,
+                FirstRowIsHeader = source.FirstRowIsHeader
+            };
+
+            foreach (int column in selectedColumns)
+            {
+                if (column < 0 || column >= source.Headers.Count)
+                    throw new ArgumentOutOfRangeException("selectedColumns");
+                result.Headers.Add(source.Headers[column]);
+            }
+
+            foreach (var sourceRow in source.Rows)
+            {
+                var row = new List<string>();
+                foreach (int column in selectedColumns)
+                    row.Add(column < sourceRow.Count ? sourceRow[column] : string.Empty);
+                result.Rows.Add(row);
+            }
+            return result;
+        }
+
+        private static void WriteRecord(TextWriter writer, IEnumerable<string> values, char delimiter)
+        {
+            writer.WriteLine(string.Join(delimiter.ToString(), values.Select(value => Escape(value ?? string.Empty, delimiter))));
+        }
+
+        private static string Escape(string value, char delimiter)
+        {
+            if (value.IndexOfAny(new[] { delimiter, '"', '\r', '\n' }) < 0)
+                return value;
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        internal static char DetectDelimiter(string text)
+        {
+            string firstRecord = GetFirstLogicalRecord(text);
+            char[] candidates = { ';', ',', '\t' };
+            char best = ';';
+            int bestCount = -1;
+            foreach (char candidate in candidates)
+            {
+                int count = CountOutsideQuotes(firstRecord, candidate);
+                if (count > bestCount)
+                {
+                    bestCount = count;
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        private static string GetFirstLogicalRecord(string text)
+        {
+            var builder = new StringBuilder();
+            bool quoted = false;
+            for (int index = 0; index < text.Length; index++)
+            {
+                char current = text[index];
+                if (current == '"')
+                {
+                    if (quoted && index + 1 < text.Length && text[index + 1] == '"')
+                    {
+                        builder.Append("\"\"");
+                        index++;
+                        continue;
+                    }
+                    quoted = !quoted;
+                }
+                if (!quoted && (current == '\r' || current == '\n'))
+                    break;
+                builder.Append(current);
+            }
+            return builder.ToString();
+        }
+
+        private static int CountOutsideQuotes(string text, char delimiter)
+        {
+            bool quoted = false;
+            int count = 0;
+            for (int index = 0; index < text.Length; index++)
+            {
+                if (text[index] == '"')
+                {
+                    if (quoted && index + 1 < text.Length && text[index + 1] == '"')
+                    {
+                        index++;
+                        continue;
+                    }
+                    quoted = !quoted;
+                }
+                else if (!quoted && text[index] == delimiter)
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        internal static List<List<string>> Parse(string text, char delimiter)
+        {
+            var rows = new List<List<string>>();
+            var row = new List<string>();
+            var field = new StringBuilder();
+            bool quoted = false;
+
+            for (int index = 0; index < text.Length; index++)
+            {
+                char current = text[index];
+                if (quoted)
+                {
+                    if (current == '"')
+                    {
+                        if (index + 1 < text.Length && text[index + 1] == '"')
+                        {
+                            field.Append('"');
+                            index++;
+                        }
+                        else
+                        {
+                            quoted = false;
+                        }
+                    }
+                    else
+                    {
+                        field.Append(current);
+                    }
+                }
+                else if (current == '"' && field.Length == 0)
+                {
+                    quoted = true;
+                }
+                else if (current == delimiter)
+                {
+                    row.Add(field.ToString());
+                    field.Clear();
+                }
+                else if (current == '\r' || current == '\n')
+                {
+                    if (current == '\r' && index + 1 < text.Length && text[index + 1] == '\n')
+                        index++;
+                    row.Add(field.ToString());
+                    field.Clear();
+                    rows.Add(row);
+                    row = new List<string>();
+                }
+                else
+                {
+                    field.Append(current);
+                }
+            }
+
+            if (field.Length > 0 || row.Count > 0)
+            {
+                row.Add(field.ToString());
+                rows.Add(row);
+            }
+            return rows;
+        }
+    }
+
+    internal static class LetterShifter
+    {
+        public static string Shift(string value, int amount)
+        {
+            if (string.IsNullOrEmpty(value) || amount == 0)
+                return value;
+
+            var result = new StringBuilder(value.Length);
+            foreach (char character in value)
+            {
+                if (character >= 'A' && character <= 'Z')
+                    result.Append(ShiftInRange(character, 'A', 26, amount));
+                else if (character >= 'a' && character <= 'z')
+                    result.Append(ShiftInRange(character, 'a', 26, amount));
+                else
+                    result.Append(character);
+            }
+            return result.ToString();
+        }
+
+        private static char ShiftInRange(char value, char start, int length, int amount)
+        {
+            int shifted = ((value - start + amount) % length + length) % length;
+            return (char)(start + shifted);
+        }
+    }
+
+    internal sealed class ImportWizardForm : Form
+    {
+        private readonly string csvPath;
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly CheckBox headerCheckBox = new CheckBox();
+        private readonly Label formatLabel = new Label();
+        private readonly Label selectionLabel = new Label();
+        private readonly CheckedListBox columnList = new CheckedListBox();
+        private readonly DataGridView previewGrid = new DataGridView();
+        private readonly Button importButton = new Button();
+        private CsvDocument loadedDocument;
+
+        public CsvDocument SelectedDocument { get; private set; }
+
+        public ImportWizardForm(string path)
+        {
+            csvPath = path;
+            Text = "PANDA Import-Assistent";
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new Size(900, 600);
+            Size = new Size(1040, 680);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout();
+            ReloadPreview(true);
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(22, 18, 22, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var titlePanel = new Panel { Dock = DockStyle.Fill };
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "CSV-Import vorbereiten",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "Prüfe das Format und wähle die Spalten aus, die PANDA übernehmen soll.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 39)
+            });
+            root.Controls.Add(titlePanel, 0, 0);
+
+            var filePanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 2,
+                BackColor = Color.White,
+                Padding = new Padding(14, 8, 14, 8),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            filePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            filePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
+            filePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+            filePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            filePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            var stepOne = new Label
+            {
+                Text = "1   DATEI UND FORMAT",
+                Font = new Font("Segoe UI Semibold", 9F),
+                ForeColor = Blue,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            filePanel.Controls.Add(stepOne, 0, 0);
+            filePanel.SetColumnSpan(stepOne, 3);
+            filePanel.Controls.Add(new Label
+            {
+                Text = Path.GetFileName(csvPath),
+                ForeColor = Navy,
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 1);
+            headerCheckBox.Text = "Erste Zeile enthält Überschriften";
+            headerCheckBox.Checked = true;
+            headerCheckBox.AutoSize = true;
+            headerCheckBox.ForeColor = Navy;
+            headerCheckBox.Anchor = AnchorStyles.Left;
+            headerCheckBox.CheckedChanged += delegate { ReloadPreview(false); };
+            filePanel.Controls.Add(headerCheckBox, 1, 1);
+            formatLabel.ForeColor = Muted;
+            formatLabel.AutoEllipsis = true;
+            formatLabel.Dock = DockStyle.Fill;
+            formatLabel.TextAlign = ContentAlignment.MiddleRight;
+            filePanel.Controls.Add(formatLabel, 2, 1);
+            root.Controls.Add(filePanel, 0, 1);
+
+            var content = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 2,
+                BackColor = Background,
+                Margin = new Padding(0)
+            };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            content.Controls.Add(CreateSectionHeader("2   SPALTEN AUSWÄHLEN", false), 0, 0);
+            content.Controls.Add(CreateSectionHeader("VORSCHAU DER DATEI", true), 1, 0);
+            root.Controls.Add(content, 0, 2);
+
+            var selectionPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 3,
+                BackColor = Color.White,
+                Padding = new Padding(12, 10, 12, 12),
+                Margin = new Padding(0, 0, 7, 0)
+            };
+            selectionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            selectionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            selectionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            selectionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            selectionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            var allButton = CreateLinkButton("Alle auswählen");
+            allButton.Click += delegate { SetAllColumns(true); };
+            var noneButton = CreateLinkButton("Auswahl aufheben");
+            noneButton.Click += delegate { SetAllColumns(false); };
+            selectionPanel.Controls.Add(allButton, 0, 0);
+            selectionPanel.Controls.Add(noneButton, 1, 0);
+            columnList.Dock = DockStyle.Fill;
+            columnList.BorderStyle = BorderStyle.None;
+            columnList.CheckOnClick = true;
+            columnList.ForeColor = Navy;
+            columnList.BackColor = Color.White;
+            columnList.HorizontalScrollbar = true;
+            columnList.ItemCheck += delegate(object sender, ItemCheckEventArgs args)
+            {
+                if (args.Index >= 0 && args.Index < previewGrid.Columns.Count)
+                    previewGrid.Columns[args.Index].Visible = args.NewValue == CheckState.Checked;
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(UpdateSelectionStatus));
+            };
+            selectionPanel.SetColumnSpan(columnList, 2);
+            selectionPanel.Controls.Add(columnList, 0, 1);
+            selectionLabel.ForeColor = Muted;
+            selectionLabel.Dock = DockStyle.Fill;
+            selectionLabel.TextAlign = ContentAlignment.MiddleLeft;
+            selectionPanel.SetColumnSpan(selectionLabel, 2);
+            selectionPanel.Controls.Add(selectionLabel, 0, 2);
+            content.Controls.Add(selectionPanel, 0, 1);
+
+            ConfigurePreviewGrid();
+            content.Controls.Add(previewGrid, 1, 1);
+
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                Padding = new Padding(0, 12, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            importButton.Text = "Importieren";
+            importButton.Dock = DockStyle.Fill;
+            importButton.Margin = new Padding(0);
+            importButton.FlatStyle = FlatStyle.Flat;
+            importButton.FlatAppearance.BorderSize = 0;
+            importButton.BackColor = Blue;
+            importButton.ForeColor = Color.White;
+            importButton.Cursor = Cursors.Hand;
+            importButton.Click += delegate { FinishImport(); };
+            var cancelButton = new Button
+            {
+                Text = "Abbrechen",
+                DialogResult = DialogResult.Cancel,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = Navy,
+                Margin = new Padding(0)
+            };
+            cancelButton.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            footer.Controls.Add(cancelButton, 1, 0);
+            footer.Controls.Add(importButton, 3, 0);
+            root.Controls.Add(footer, 0, 3);
+            AcceptButton = importButton;
+            CancelButton = cancelButton;
+        }
+
+        private Panel CreateSectionHeader(string text, bool preview)
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = preview ? Color.FromArgb(236, 243, 255) : Color.White,
+                Margin = preview ? new Padding(7, 0, 0, 0) : new Padding(0, 0, 7, 0)
+            };
+            panel.Controls.Add(new Label
+            {
+                Text = text,
+                Font = new Font("Segoe UI Semibold", 9F),
+                ForeColor = preview ? Blue : Navy,
+                AutoSize = true,
+                Location = new Point(12, 12)
+            });
+            return panel;
+        }
+
+        private Button CreateLinkButton(string text)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = Blue,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 4, 4)
+            };
+            button.FlatAppearance.BorderSize = 0;
+            return button;
+        }
+
+        private void ConfigurePreviewGrid()
+        {
+            previewGrid.Dock = DockStyle.Fill;
+            previewGrid.Margin = new Padding(7, 0, 0, 0);
+            previewGrid.BackgroundColor = Color.White;
+            previewGrid.BorderStyle = BorderStyle.None;
+            previewGrid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            previewGrid.GridColor = Color.FromArgb(228, 234, 242);
+            previewGrid.RowHeadersVisible = false;
+            previewGrid.ColumnHeadersHeight = 36;
+            previewGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 253);
+            previewGrid.ColumnHeadersDefaultCellStyle.ForeColor = Navy;
+            previewGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
+            previewGrid.EnableHeadersVisualStyles = false;
+            previewGrid.DefaultCellStyle.BackColor = Color.White;
+            previewGrid.DefaultCellStyle.ForeColor = Navy;
+            previewGrid.DefaultCellStyle.SelectionBackColor = Color.White;
+            previewGrid.DefaultCellStyle.SelectionForeColor = Navy;
+            previewGrid.RowTemplate.Height = 28;
+            previewGrid.AllowUserToAddRows = false;
+            previewGrid.AllowUserToDeleteRows = false;
+            previewGrid.AllowUserToOrderColumns = false;
+            previewGrid.ReadOnly = true;
+            previewGrid.MultiSelect = false;
+            previewGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        }
+
+        private void ReloadPreview(bool firstLoad)
+        {
+            try
+            {
+                loadedDocument = CsvCodec.Load(csvPath, headerCheckBox.Checked);
+                if (loadedDocument.Headers.Count == 0)
+                    throw new InvalidDataException("Die Datei enthält keine auswertbaren CSV-Daten.");
+                formatLabel.Text = loadedDocument.Rows.Count + " Zeilen  •  " + loadedDocument.Headers.Count + " Spalten  •  " + DelimiterName(loadedDocument.Delimiter);
+                columnList.Items.Clear();
+                foreach (string header in loadedDocument.Headers)
+                    columnList.Items.Add(header, true);
+                PopulatePreview();
+                UpdateSelectionStatus();
+            }
+            catch (Exception exception)
+            {
+                if (!firstLoad)
+                    MessageBox.Show(this, "Die Vorschau konnte nicht aktualisiert werden.\r\n\r\n" + exception.Message, "Import-Assistent", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                importButton.Enabled = false;
+            }
+        }
+
+        private void PopulatePreview()
+        {
+            previewGrid.SuspendLayout();
+            previewGrid.Columns.Clear();
+            previewGrid.Rows.Clear();
+            for (int column = 0; column < loadedDocument.Headers.Count; column++)
+            {
+                previewGrid.Columns.Add("Preview" + column, loadedDocument.Headers[column]);
+                previewGrid.Columns[column].SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+            foreach (var row in loadedDocument.Rows.Take(50))
+                previewGrid.Rows.Add(row.Cast<object>().ToArray());
+            previewGrid.ClearSelection();
+            previewGrid.ResumeLayout();
+        }
+
+        private void SetAllColumns(bool selected)
+        {
+            for (int index = 0; index < columnList.Items.Count; index++)
+                columnList.SetItemChecked(index, selected);
+            BeginInvoke(new Action(UpdateSelectionStatus));
+        }
+
+        private void UpdateSelectionStatus()
+        {
+            int count = columnList.CheckedIndices.Count;
+            selectionLabel.Text = count + " von " + columnList.Items.Count + " Spalten ausgewählt";
+            importButton.Enabled = count > 0;
+        }
+
+        private void FinishImport()
+        {
+            var selected = columnList.CheckedIndices.Cast<int>().ToList();
+            if (selected.Count == 0)
+            {
+                MessageBox.Show(this, "Bitte wähle mindestens eine Spalte aus.", "Keine Spalte ausgewählt", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SelectedDocument = CsvCodec.SelectColumns(loadedDocument, selected);
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        private static string DelimiterName(char delimiter)
+        {
+            if (delimiter == ';') return "Semikolon";
+            if (delimiter == ',') return "Komma";
+            if (delimiter == '\t') return "Tabulator";
+            return delimiter.ToString();
+        }
+
+        internal void UncheckLastColumnForPreview()
+        {
+            if (columnList.Items.Count > 1)
+                columnList.SetItemChecked(columnList.Items.Count - 1, false);
+        }
+    }
+
+    internal sealed class MainForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color PaleBlue = Color.FromArgb(236, 243, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+
+        private readonly DataGridView originalGrid = new DataGridView();
+        private readonly DataGridView resultGrid = new DataGridView();
+        private readonly ComboBox scopeComboBox = new ComboBox();
+        private readonly NumericUpDown stepNumeric = new NumericUpDown();
+        private readonly Label statusLabel = new Label();
+        private readonly Label fileLabel = new Label();
+        private readonly Button exportButton = new Button();
+        private readonly Button resetButton = new Button();
+
+        private CsvDocument document;
+        private string importedPath;
+
+        public MainForm()
+        {
+            Text = "PANDA – Pseudonymisierung alphanumerischer Nutzdaten";
+            StartPosition = FormStartPosition.CenterScreen;
+            MinimumSize = new Size(1050, 680);
+            Size = new Size(1320, 820);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+
+            BuildLayout();
+            ConfigureGrid(originalGrid, true);
+            ConfigureGrid(resultGrid, false);
+            SetDocumentControlsEnabled(false);
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(20, 18, 20, 16),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            Controls.Add(root);
+
+            var header = new Panel { Dock = DockStyle.Fill, BackColor = Background };
+            var title = new Label
+            {
+                Text = "PANDA",
+                ForeColor = Navy,
+                Font = new Font("Segoe UI Semibold", 19F),
+                AutoSize = true,
+                Location = new Point(0, 0)
+            };
+            var subtitle = new Label
+            {
+                Text = "Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 39)
+            };
+            header.Controls.Add(title);
+            header.Controls.Add(subtitle);
+            root.Controls.Add(header, 0, 0);
+
+            var toolbar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 8,
+                RowCount = 2,
+                Padding = new Padding(12, 10, 12, 8),
+                BackColor = Color.White,
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 148));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 122));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            root.Controls.Add(toolbar, 0, 1);
+
+            var importButton = CreateButton("Importieren", Blue, Color.White);
+            importButton.Click += delegate { ImportCsv(); };
+            toolbar.Controls.Add(importButton, 0, 0);
+
+            scopeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            scopeComboBox.Items.AddRange(new object[] { "Markierte Zellen", "Aktuelle Zelle", "Alle Einträge" });
+            scopeComboBox.SelectedIndex = 0;
+            scopeComboBox.Dock = DockStyle.Fill;
+            scopeComboBox.Margin = new Padding(7, 3, 7, 3);
+            toolbar.Controls.Add(scopeComboBox, 1, 0);
+
+            stepNumeric.Minimum = 1;
+            stepNumeric.Maximum = 25;
+            stepNumeric.Value = 1;
+            stepNumeric.Dock = DockStyle.Fill;
+            stepNumeric.TextAlign = HorizontalAlignment.Center;
+            stepNumeric.Margin = new Padding(7, 3, 7, 3);
+            toolbar.Controls.Add(stepNumeric, 2, 0);
+
+            var upButton = CreateButton("Hochzählen  +", Color.FromArgb(29, 157, 105), Color.White);
+            upButton.Click += delegate { ApplyShift((int)stepNumeric.Value); };
+            toolbar.Controls.Add(upButton, 3, 0);
+
+            var downButton = CreateButton("Runterzählen  −", Color.FromArgb(230, 91, 84), Color.White);
+            downButton.Click += delegate { ApplyShift(-(int)stepNumeric.Value); };
+            toolbar.Controls.Add(downButton, 4, 0);
+
+            resetButton.Text = "Zurücksetzen";
+            StyleSecondaryButton(resetButton);
+            resetButton.Click += delegate { ResetResults(); };
+            toolbar.Controls.Add(resetButton, 5, 0);
+
+            exportButton.Text = "CSV exportieren";
+            StyleSecondaryButton(exportButton);
+            exportButton.Click += delegate { ExportCsv(); };
+            toolbar.Controls.Add(exportButton, 6, 0);
+
+            fileLabel.Text = "Noch keine CSV geladen";
+            fileLabel.ForeColor = Muted;
+            fileLabel.AutoEllipsis = true;
+            fileLabel.Dock = DockStyle.Fill;
+            fileLabel.TextAlign = ContentAlignment.MiddleLeft;
+            toolbar.SetColumnSpan(fileLabel, 4);
+            toolbar.Controls.Add(fileLabel, 0, 1);
+
+            var hint = new Label
+            {
+                Text = "Tipp: Strg oder Umschalt gedrückt halten, um mehrere Zellen zu markieren.",
+                ForeColor = Muted,
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+            toolbar.SetColumnSpan(hint, 4);
+            toolbar.Controls.Add(hint, 4, 1);
+
+            var grids = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 2,
+                BackColor = Background,
+                Margin = new Padding(0)
+            };
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            grids.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            grids.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.Controls.Add(grids, 0, 2);
+
+            grids.Controls.Add(CreateGridHeader("ORIGINAL", "Importierte CSV-Werte", false), 0, 0);
+            grids.Controls.Add(CreateGridHeader("ERGEBNIS", "Veränderte Werte", true), 1, 0);
+
+            originalGrid.Margin = new Padding(0, 0, 7, 0);
+            resultGrid.Margin = new Padding(7, 0, 0, 0);
+            grids.Controls.Add(originalGrid, 0, 1);
+            grids.Controls.Add(resultGrid, 1, 1);
+
+            var statusPanel = new Panel { Dock = DockStyle.Fill, BackColor = Background };
+            statusLabel.Text = "Bereit – bitte eine CSV-Datei importieren.";
+            statusLabel.ForeColor = Muted;
+            statusLabel.AutoSize = true;
+            statusLabel.Location = new Point(2, 12);
+            statusPanel.Controls.Add(statusLabel);
+            root.Controls.Add(statusPanel, 0, 3);
+        }
+
+        private Panel CreateGridHeader(string eyebrow, string caption, bool result)
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = result ? PaleBlue : Color.White,
+                Margin = result ? new Padding(7, 0, 0, 0) : new Padding(0, 0, 7, 0)
+            };
+            var title = new Label
+            {
+                Text = eyebrow + "   " + caption,
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = result ? Blue : Navy,
+                AutoSize = true,
+                Location = new Point(12, 11)
+            };
+            panel.Controls.Add(title);
+            return panel;
+        }
+
+        private Button CreateButton(string text, Color background, Color foreground)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = background,
+                ForeColor = foreground,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(4, 2, 4, 2)
+            };
+            button.FlatAppearance.BorderSize = 0;
+            return button;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Cursor = Cursors.Hand;
+            button.Margin = new Padding(4, 2, 4, 2);
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void ConfigureGrid(DataGridView grid, bool selectable)
+        {
+            grid.Dock = DockStyle.Fill;
+            grid.BackgroundColor = Color.White;
+            grid.BorderStyle = BorderStyle.None;
+            grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            grid.GridColor = Color.FromArgb(228, 234, 242);
+            grid.RowHeadersVisible = true;
+            grid.RowHeadersWidth = selectable ? 74 : 50;
+            grid.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 253);
+            grid.RowHeadersDefaultCellStyle.ForeColor = Muted;
+            grid.RowHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            grid.ColumnHeadersHeight = 36;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 253);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Navy;
+            grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(248, 250, 253);
+            grid.EnableHeadersVisualStyles = false;
+            grid.DefaultCellStyle.BackColor = Color.White;
+            grid.DefaultCellStyle.ForeColor = Navy;
+            grid.DefaultCellStyle.SelectionBackColor = selectable ? Color.FromArgb(214, 227, 255) : Color.White;
+            grid.DefaultCellStyle.SelectionForeColor = Navy;
+            grid.DefaultCellStyle.Padding = new Padding(4, 2, 4, 2);
+            grid.RowTemplate.Height = 30;
+            grid.AllowUserToAddRows = false;
+            grid.AllowUserToDeleteRows = false;
+            grid.AllowUserToOrderColumns = false;
+            grid.AllowUserToResizeRows = false;
+            grid.MultiSelect = true;
+            grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+            grid.ReadOnly = true;
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
+            grid.DataError += delegate { };
+
+            if (selectable)
+            {
+                grid.RowPostPaint += DrawOriginalRowHeader;
+                grid.RowHeaderMouseClick += ToggleOriginalRow;
+                grid.Scroll += delegate { SyncScroll(originalGrid, resultGrid); };
+            }
+            else
+            {
+                grid.MultiSelect = false;
+                grid.TabStop = false;
+                grid.SelectionChanged += delegate
+                {
+                    if (grid.SelectedCells.Count > 0)
+                        grid.ClearSelection();
+                };
+                grid.CellMouseDown += delegate(object sender, DataGridViewCellMouseEventArgs args)
+                {
+                    if (args.RowIndex < 0 || args.ColumnIndex < 0)
+                        return;
+                    originalGrid.ClearSelection();
+                    originalGrid.CurrentCell = originalGrid.Rows[args.RowIndex].Cells[args.ColumnIndex];
+                    originalGrid.CurrentCell.Selected = true;
+                    originalGrid.Focus();
+                    BeginInvoke(new Action(delegate
+                    {
+                        grid.ClearSelection();
+                        grid.CurrentCell = null;
+                    }));
+                };
+                grid.Scroll += delegate { SyncScroll(resultGrid, originalGrid); };
+            }
+        }
+
+        private void DrawOriginalRowHeader(object sender, DataGridViewRowPostPaintEventArgs args)
+        {
+            var grid = (DataGridView)sender;
+            var bounds = new Rectangle(0, args.RowBounds.Top, grid.RowHeadersWidth, args.RowBounds.Height);
+            using (var backgroundBrush = new SolidBrush(Color.FromArgb(248, 250, 253)))
+                args.Graphics.FillRectangle(backgroundBrush, bounds);
+            using (var linePen = new Pen(Color.FromArgb(228, 234, 242)))
+                args.Graphics.DrawLine(linePen, bounds.Left, bounds.Bottom - 1, bounds.Right, bounds.Bottom - 1);
+
+            bool selected = grid.Rows[args.RowIndex].Tag is bool && (bool)grid.Rows[args.RowIndex].Tag;
+            int checkSize = 14;
+            var checkPoint = new Point(8, bounds.Top + (bounds.Height - checkSize) / 2);
+            CheckBoxRenderer.DrawCheckBox(args.Graphics, checkPoint, selected ? System.Windows.Forms.VisualStyles.CheckBoxState.CheckedNormal : System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+            var numberBounds = new Rectangle(29, bounds.Top, bounds.Width - 32, bounds.Height);
+            TextRenderer.DrawText(args.Graphics, (args.RowIndex + 1).ToString(), grid.Font, numberBounds, Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+        }
+
+        private void ToggleOriginalRow(object sender, DataGridViewCellMouseEventArgs args)
+        {
+            if (args.RowIndex < 0 || args.RowIndex >= originalGrid.Rows.Count)
+                return;
+            var row = originalGrid.Rows[args.RowIndex];
+            bool wasSelected = row.Tag is bool && (bool)row.Tag;
+            bool isSelected = !wasSelected;
+            row.Tag = isSelected;
+            foreach (DataGridViewCell cell in row.Cells)
+                cell.Selected = isSelected;
+            originalGrid.InvalidateRow(args.RowIndex);
+            BeginInvoke(new Action(RefreshCheckedRowSelections));
+            statusLabel.Text = isSelected
+                ? "Zeile " + (args.RowIndex + 1) + " vollständig ausgewählt."
+                : "Zeile " + (args.RowIndex + 1) + " aus der vollständigen Auswahl entfernt.";
+            statusLabel.ForeColor = Muted;
+        }
+
+        private void RefreshCheckedRowSelections()
+        {
+            foreach (DataGridViewRow row in originalGrid.Rows)
+            {
+                bool isSelected = row.Tag is bool && (bool)row.Tag;
+                if (!isSelected)
+                    continue;
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.Selected = true;
+            }
+            originalGrid.Invalidate();
+        }
+
+        private void ImportCsv()
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Title = "CSV-Datei importieren";
+                dialog.Filter = "CSV-Dateien (*.csv)|*.csv|Textdateien (*.txt)|*.txt|Alle Dateien (*.*)|*.*";
+                dialog.CheckFileExists = true;
+                dialog.Multiselect = false;
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                try
+                {
+                    using (var wizard = new ImportWizardForm(dialog.FileName))
+                    {
+                        if (wizard.ShowDialog(this) != DialogResult.OK)
+                            return;
+                        document = wizard.SelectedDocument;
+                    }
+                    importedPath = dialog.FileName;
+                    PopulateGrids();
+                    fileLabel.Text = Path.GetFileName(dialog.FileName) + "  •  " + document.Rows.Count + " Zeilen  •  " + document.Headers.Count + " importierte Spalten  •  " + DelimiterName(document.Delimiter);
+                    statusLabel.Text = "Import erfolgreich. Wähle links Zellen aus oder nutze ‚Alle Einträge‘.";
+                    statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+                    SetDocumentControlsEnabled(true);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Die CSV-Datei konnte nicht importiert werden.\r\n\r\n" + exception.Message, "Import fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    statusLabel.Text = "Import fehlgeschlagen.";
+                    statusLabel.ForeColor = Color.FromArgb(190, 60, 55);
+                }
+            }
+        }
+
+        private string DelimiterName(char delimiter)
+        {
+            if (delimiter == ';') return "Semikolon";
+            if (delimiter == ',') return "Komma";
+            if (delimiter == '\t') return "Tabulator";
+            return delimiter.ToString();
+        }
+
+        private void PopulateGrids()
+        {
+            originalGrid.SuspendLayout();
+            resultGrid.SuspendLayout();
+            originalGrid.Columns.Clear();
+            resultGrid.Columns.Clear();
+            originalGrid.Rows.Clear();
+            resultGrid.Rows.Clear();
+
+            for (int column = 0; column < document.Headers.Count; column++)
+            {
+                string key = "Column" + column;
+                originalGrid.Columns.Add(key, document.Headers[column]);
+                resultGrid.Columns.Add(key, document.Headers[column]);
+                originalGrid.Columns[column].SortMode = DataGridViewColumnSortMode.NotSortable;
+                resultGrid.Columns[column].SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+
+            foreach (var row in document.Rows)
+            {
+                originalGrid.Rows.Add(row.Cast<object>().ToArray());
+                resultGrid.Rows.Add(row.Cast<object>().ToArray());
+            }
+
+            for (int row = 0; row < document.Rows.Count; row++)
+            {
+                originalGrid.Rows[row].HeaderCell.Value = (row + 1).ToString();
+                originalGrid.Rows[row].Tag = false;
+                resultGrid.Rows[row].HeaderCell.Value = (row + 1).ToString();
+            }
+
+            originalGrid.ClearSelection();
+            resultGrid.ClearSelection();
+            resultGrid.CurrentCell = null;
+            originalGrid.ResumeLayout();
+            resultGrid.ResumeLayout();
+        }
+
+        private void ApplyShift(int amount)
+        {
+            if (document == null)
+                return;
+
+            var cells = GetTargetCells();
+            if (cells.Count == 0)
+            {
+                MessageBox.Show(this, "Bitte markiere mindestens eine Zelle in der linken Tabelle oder wähle als Bereich ‚Alle Einträge‘.", "Keine Auswahl", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int changed = 0;
+            foreach (var coordinate in cells)
+            {
+                var cell = resultGrid.Rows[coordinate.Item1].Cells[coordinate.Item2];
+                string before = Convert.ToString(cell.Value) ?? string.Empty;
+                string after = LetterShifter.Shift(before, amount);
+                cell.Value = after;
+                if (!string.Equals(before, after, StringComparison.Ordinal))
+                    changed++;
+            }
+
+            statusLabel.Text = changed + " von " + cells.Count + " Zellen verändert (" + (amount > 0 ? "+" : string.Empty) + amount + ").";
+            statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+        }
+
+        private List<Tuple<int, int>> GetTargetCells()
+        {
+            var result = new List<Tuple<int, int>>();
+            if (scopeComboBox.SelectedIndex == 2)
+            {
+                for (int row = 0; row < resultGrid.Rows.Count; row++)
+                    for (int column = 0; column < resultGrid.Columns.Count; column++)
+                        result.Add(Tuple.Create(row, column));
+                return result;
+            }
+
+            if (scopeComboBox.SelectedIndex == 1)
+            {
+                var current = originalGrid.CurrentCell;
+                if (current != null)
+                    result.Add(Tuple.Create(current.RowIndex, current.ColumnIndex));
+                return result;
+            }
+
+            foreach (DataGridViewCell cell in originalGrid.SelectedCells)
+                result.Add(Tuple.Create(cell.RowIndex, cell.ColumnIndex));
+            foreach (DataGridViewRow row in originalGrid.Rows)
+            {
+                bool wholeRow = row.Tag is bool && (bool)row.Tag;
+                if (!wholeRow)
+                    continue;
+                for (int column = 0; column < resultGrid.Columns.Count; column++)
+                    result.Add(Tuple.Create(row.Index, column));
+            }
+            return result.Distinct().ToList();
+        }
+
+        private void ResetResults()
+        {
+            if (document == null)
+                return;
+            for (int row = 0; row < document.Rows.Count; row++)
+                for (int column = 0; column < document.Headers.Count; column++)
+                    resultGrid.Rows[row].Cells[column].Value = document.Rows[row][column];
+            statusLabel.Text = "Alle Ergebnisse wurden auf die importierten Werte zurückgesetzt.";
+            statusLabel.ForeColor = Muted;
+        }
+
+        private void ExportCsv()
+        {
+            if (document == null)
+                return;
+
+            using (var dialog = new SaveFileDialog())
+            {
+                dialog.Title = "Veränderte CSV exportieren";
+                dialog.Filter = "CSV-Dateien (*.csv)|*.csv|Alle Dateien (*.*)|*.*";
+                dialog.DefaultExt = "csv";
+                dialog.AddExtension = true;
+                string sourceName = string.IsNullOrEmpty(importedPath) ? "ergebnis" : Path.GetFileNameWithoutExtension(importedPath) + "_veraendert";
+                dialog.FileName = sourceName + ".csv";
+                dialog.InitialDirectory = string.IsNullOrEmpty(importedPath) ? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) : Path.GetDirectoryName(importedPath);
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                try
+                {
+                    var rows = new List<IList<string>>();
+                    foreach (DataGridViewRow gridRow in resultGrid.Rows)
+                    {
+                        var values = new List<string>();
+                        foreach (DataGridViewCell cell in gridRow.Cells)
+                            values.Add(Convert.ToString(cell.Value) ?? string.Empty);
+                        rows.Add(values);
+                    }
+                    CsvCodec.Save(dialog.FileName, document, rows);
+                    statusLabel.Text = "Export erfolgreich: " + dialog.FileName;
+                    statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+                    MessageBox.Show(this, "Die veränderte CSV wurde erfolgreich gespeichert.", "Export abgeschlossen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Die CSV-Datei konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Export fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void SyncScroll(DataGridView source, DataGridView target)
+        {
+            if (source.Rows.Count == 0 || target.Rows.Count == 0)
+                return;
+            try
+            {
+                target.FirstDisplayedScrollingRowIndex = source.FirstDisplayedScrollingRowIndex;
+                target.HorizontalScrollingOffset = source.HorizontalScrollingOffset;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+            }
+        }
+
+        private void SetDocumentControlsEnabled(bool enabled)
+        {
+            scopeComboBox.Enabled = enabled;
+            if (enabled && scopeComboBox.SelectedIndex < 0 && scopeComboBox.Items.Count > 0)
+                scopeComboBox.SelectedIndex = 0;
+            stepNumeric.Enabled = enabled;
+            exportButton.Enabled = enabled;
+            resetButton.Enabled = enabled;
+            scopeComboBox.Refresh();
+        }
+
+        internal void LoadPreviewData()
+        {
+            document = new CsvDocument { Delimiter = ';', FirstRowIsHeader = true };
+            document.Headers.AddRange(new[] { "Kundennummer", "Vorname", "Nachname", "Ort" });
+            document.Rows.Add(new List<string> { "1001", "Anna", "Meyer", "Berlin" });
+            document.Rows.Add(new List<string> { "1002", "Jonas", "Schmidt", "Hamburg" });
+            document.Rows.Add(new List<string> { "1003", "Zoe", "Fischer", "München" });
+            document.Rows.Add(new List<string> { "1004", "Lena", "Wagner", "Köln" });
+            PopulateGrids();
+            for (int column = 0; column < document.Headers.Count; column++)
+                resultGrid.Rows[0].Cells[column].Value = LetterShifter.Shift(document.Rows[0][column], 1);
+            originalGrid.Rows[0].Tag = true;
+            RefreshCheckedRowSelections();
+            fileLabel.Text = "beispiel.csv  •  4 Zeilen  •  4 Spalten  •  Trennzeichen: Semikolon";
+            statusLabel.Text = "3 von 4 Zellen verändert (+1).";
+            statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+            SetDocumentControlsEnabled(true);
+            scopeComboBox.SelectedIndex = 0;
+            scopeComboBox.Refresh();
+        }
+    }
+}
