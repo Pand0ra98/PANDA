@@ -1,6 +1,4 @@
-# Kompilierte Ausgaben
-PANDA-Portable.exe
-PANDA-Setup.exe
+# Temporäre kompilierte Ausgaben
 PANDA.Tests.exe
 PANDA-Uninstall.Payload.exe
 *.pdb
