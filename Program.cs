@@ -11,8 +11,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace Panda
 {
@@ -70,6 +70,29 @@ namespace Panda
                         bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     settingsForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--templates-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                var previewTemplates = new List<SelectionTemplate>
+                {
+                    new SelectionTemplate("Kontaktdaten", new[] { "Vorname", "Büro" })
+                };
+                using (var templatesForm = new SelectionTemplatesForm(
+                    new[] { "Kundennummer", "Vorname", "Nachname", "Büro", "Ort" },
+                    previewTemplates,
+                    new[] { 1, 3 },
+                    false))
+                {
+                    templatesForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(templatesForm.Width, templatesForm.Height))
+                    {
+                        templatesForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, templatesForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    templatesForm.Close();
                 }
                 return;
             }
@@ -551,6 +574,505 @@ namespace Panda
         }
     }
 
+    internal sealed class SelectionTemplate
+    {
+        public string Name;
+        public List<string> Columns;
+
+        public SelectionTemplate(string name, IEnumerable<string> columns)
+        {
+            Name = name ?? string.Empty;
+            Columns = columns == null ? new List<string>() : columns.ToList();
+        }
+
+        public SelectionTemplate Clone()
+        {
+            return new SelectionTemplate(Name, Columns);
+        }
+
+        public override string ToString()
+        {
+            return Name;
+        }
+    }
+
+    internal static class SelectionTemplateStore
+    {
+        private static string TemplatesPath
+        {
+            get
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PANDA", "selection-templates.dat");
+            }
+        }
+
+        public static List<SelectionTemplate> Load()
+        {
+            var templates = new List<SelectionTemplate>();
+            try
+            {
+                if (!File.Exists(TemplatesPath))
+                    return templates;
+                foreach (string line in File.ReadAllLines(TemplatesPath, Encoding.UTF8))
+                {
+                    SelectionTemplate template;
+                    if (!TryParseLine(line, out template))
+                        continue;
+                    int existing = templates.FindIndex(item => string.Equals(item.Name, template.Name, StringComparison.OrdinalIgnoreCase));
+                    if (existing >= 0)
+                        templates[existing] = template;
+                    else
+                        templates.Add(template);
+                }
+            }
+            catch
+            {
+            }
+            return templates.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        public static void Save(IEnumerable<SelectionTemplate> templates)
+        {
+            string directory = Path.GetDirectoryName(TemplatesPath);
+            if (!Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+            string[] lines = templates
+                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.Name) && item.Columns.Count > 0)
+                .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+                .Select(SerializeLine)
+                .ToArray();
+            File.WriteAllLines(TemplatesPath, lines, new UTF8Encoding(false));
+        }
+
+        internal static string SerializeLine(SelectionTemplate template)
+        {
+            var parts = new List<string> { Encode(template.Name.Trim()) };
+            parts.AddRange(template.Columns
+                .Where(column => !string.IsNullOrWhiteSpace(column))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(column => Encode(column.Trim())));
+            return string.Join("|", parts.ToArray());
+        }
+
+        internal static bool TryParseLine(string line, out SelectionTemplate template)
+        {
+            template = null;
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+            try
+            {
+                string[] parts = line.Split('|');
+                if (parts.Length < 2)
+                    return false;
+                string name = Decode(parts[0]).Trim();
+                var columns = parts.Skip(1)
+                    .Select(Decode)
+                    .Where(column => !string.IsNullOrWhiteSpace(column))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (name.Length == 0 || columns.Count == 0)
+                    return false;
+                template = new SelectionTemplate(name, columns);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+        }
+
+        internal static List<int> FindColumnIndices(IList<string> headers, IEnumerable<string> templateColumns)
+        {
+            var wanted = new HashSet<string>(templateColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            var indices = new List<int>();
+            for (int index = 0; index < headers.Count; index++)
+                if (wanted.Contains(headers[index]))
+                    indices.Add(index);
+            return indices;
+        }
+
+        private static string Encode(string value)
+        {
+            return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        }
+
+        private static string Decode(string value)
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+        }
+    }
+
+    internal sealed class SelectionTemplatesForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly IList<string> headers;
+        private readonly List<SelectionTemplate> templates;
+        private readonly HashSet<int> initialSelectedColumns;
+        private readonly bool persistChanges;
+        private readonly ComboBox templateComboBox = new ComboBox();
+        private readonly TextBox nameTextBox = new TextBox();
+        private readonly CheckedListBox columnList = new CheckedListBox();
+        private readonly Button applyButton = new Button();
+        private readonly Button deleteButton = new Button();
+        private readonly Label editorStatusLabel = new Label();
+
+        public SelectionTemplate TemplateToApply { get; private set; }
+
+        public SelectionTemplatesForm(IList<string> headers, List<SelectionTemplate> templates, IEnumerable<int> selectedColumns)
+            : this(headers, templates, selectedColumns, true)
+        {
+        }
+
+        internal SelectionTemplatesForm(IList<string> headers, List<SelectionTemplate> templates, IEnumerable<int> selectedColumns, bool persistChanges)
+        {
+            this.headers = headers;
+            this.templates = templates;
+            this.initialSelectedColumns = new HashSet<int>(selectedColumns ?? Enumerable.Empty<int>());
+            this.persistChanges = persistChanges;
+            Text = "PANDA – Auswahlvorlagen";
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new Size(610, 560);
+            ClientSize = new Size(650, 610);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout();
+            RefreshTemplateList(null);
+            RestoreInitialSelection();
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 102));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Auswahlvorlagen",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Speichere häufig benötigte Spaltenkombinationen und wende sie mit einem Klick an.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var existingCard = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 2,
+                BackColor = Color.White,
+                Padding = new Padding(16, 12, 16, 12),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            existingCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            existingCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            existingCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            existingCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            existingCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            existingCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            var existingLabel = new Label
+            {
+                Text = "Gespeicherte Vorlage",
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            existingCard.SetColumnSpan(existingLabel, 4);
+            existingCard.Controls.Add(existingLabel, 0, 0);
+            templateComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            templateComboBox.Dock = DockStyle.Fill;
+            templateComboBox.Margin = new Padding(0, 3, 10, 3);
+            templateComboBox.SelectedIndexChanged += delegate { LoadSelectedTemplate(); };
+            existingCard.Controls.Add(templateComboBox, 0, 1);
+            applyButton.Text = "Anwenden";
+            StylePrimaryButton(applyButton);
+            applyButton.Click += delegate { ApplySelectedTemplate(); };
+            existingCard.Controls.Add(applyButton, 1, 1);
+            deleteButton.Text = "Löschen";
+            StyleSecondaryButton(deleteButton);
+            deleteButton.Click += delegate { DeleteSelectedTemplate(); };
+            existingCard.Controls.Add(deleteButton, 3, 1);
+            root.Controls.Add(existingCard, 0, 1);
+
+            var editorCard = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 4,
+                BackColor = Color.White,
+                Padding = new Padding(16, 14, 16, 14),
+                Margin = new Padding(0)
+            };
+            editorCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+            editorCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            editorCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 142));
+            editorCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            editorCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            editorCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            editorCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            editorCard.Controls.Add(new Label
+            {
+                Text = "Vorlagenname",
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 0);
+            nameTextBox.Dock = DockStyle.Fill;
+            nameTextBox.Margin = new Padding(0, 6, 12, 6);
+            editorCard.Controls.Add(nameTextBox, 1, 0);
+            var saveButton = new Button { Text = "Vorlage speichern" };
+            StylePrimaryButton(saveButton);
+            saveButton.Click += delegate { SaveTemplate(); };
+            editorCard.Controls.Add(saveButton, 2, 0);
+            var columnsLabel = new Label
+            {
+                Text = "Spalten für die Vorlage auswählen",
+                ForeColor = Muted,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            editorCard.SetColumnSpan(columnsLabel, 3);
+            editorCard.Controls.Add(columnsLabel, 0, 1);
+            columnList.CheckOnClick = true;
+            columnList.Dock = DockStyle.Fill;
+            columnList.BorderStyle = BorderStyle.FixedSingle;
+            columnList.BackColor = Color.White;
+            columnList.ForeColor = Navy;
+            columnList.ItemCheck += delegate
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(UpdateEditorStatus));
+            };
+            foreach (string header in headers)
+                columnList.Items.Add(header);
+            editorCard.SetColumnSpan(columnList, 3);
+            editorCard.Controls.Add(columnList, 0, 2);
+            editorStatusLabel.ForeColor = Muted;
+            editorStatusLabel.AutoEllipsis = true;
+            editorStatusLabel.Dock = DockStyle.Fill;
+            editorStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
+            editorCard.SetColumnSpan(editorStatusLabel, 3);
+            editorCard.Controls.Add(editorStatusLabel, 0, 3);
+            root.Controls.Add(editorCard, 0, 2);
+
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Padding = new Padding(0, 12, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            var closeButton = new Button
+            {
+                Text = "Schließen",
+                DialogResult = DialogResult.Cancel
+            };
+            StyleSecondaryButton(closeButton);
+            footer.Controls.Add(closeButton, 1, 0);
+            root.Controls.Add(footer, 0, 3);
+            CancelButton = closeButton;
+        }
+
+        private void StylePrimaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Blue;
+            button.ForeColor = Color.White;
+            button.Margin = new Padding(0, 3, 0, 3);
+            button.Cursor = Cursors.Hand;
+            button.FlatAppearance.BorderSize = 0;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Margin = new Padding(0, 3, 0, 3);
+            button.Cursor = Cursors.Hand;
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void RefreshTemplateList(string selectedName)
+        {
+            templateComboBox.BeginUpdate();
+            templateComboBox.Items.Clear();
+            foreach (SelectionTemplate template in templates.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
+                templateComboBox.Items.Add(template);
+            templateComboBox.EndUpdate();
+            templateComboBox.SelectedIndex = -1;
+            if (!string.IsNullOrEmpty(selectedName))
+            {
+                for (int index = 0; index < templateComboBox.Items.Count; index++)
+                {
+                    var item = (SelectionTemplate)templateComboBox.Items[index];
+                    if (string.Equals(item.Name, selectedName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        templateComboBox.SelectedIndex = index;
+                        break;
+                    }
+                }
+            }
+            UpdateTemplateButtons();
+        }
+
+        private void RestoreInitialSelection()
+        {
+            nameTextBox.Clear();
+            for (int index = 0; index < columnList.Items.Count; index++)
+                columnList.SetItemChecked(index, initialSelectedColumns.Contains(index));
+            UpdateEditorStatus();
+        }
+
+        private void LoadSelectedTemplate()
+        {
+            var template = templateComboBox.SelectedItem as SelectionTemplate;
+            UpdateTemplateButtons();
+            if (template == null)
+                return;
+            nameTextBox.Text = template.Name;
+            var selected = new HashSet<int>(SelectionTemplateStore.FindColumnIndices(headers, template.Columns));
+            for (int index = 0; index < columnList.Items.Count; index++)
+                columnList.SetItemChecked(index, selected.Contains(index));
+            UpdateEditorStatus();
+        }
+
+        private void UpdateTemplateButtons()
+        {
+            bool hasSelection = templateComboBox.SelectedItem is SelectionTemplate;
+            applyButton.Enabled = hasSelection;
+            deleteButton.Enabled = hasSelection;
+        }
+
+        private void UpdateEditorStatus()
+        {
+            int count = 0;
+            for (int index = 0; index < columnList.Items.Count; index++)
+                if (columnList.GetItemChecked(index)) count++;
+            editorStatusLabel.Text = count == 1 ? "1 Spalte ausgewählt" : count + " Spalten ausgewählt";
+        }
+
+        private List<string> GetCheckedColumns()
+        {
+            var columns = new List<string>();
+            for (int index = 0; index < columnList.Items.Count; index++)
+                if (columnList.GetItemChecked(index)) columns.Add(headers[index]);
+            return columns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private void SaveTemplate()
+        {
+            string name = nameTextBox.Text.Trim();
+            List<string> columns = GetCheckedColumns();
+            if (name.Length == 0)
+            {
+                MessageBox.Show(this, "Bitte gib einen Namen für die Vorlage ein.", "Name fehlt", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                nameTextBox.Focus();
+                return;
+            }
+            if (columns.Count == 0)
+            {
+                MessageBox.Show(this, "Bitte wähle mindestens eine Spalte für die Vorlage aus.", "Keine Spalten", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int existingIndex = templates.FindIndex(item => string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                DialogResult overwrite = MessageBox.Show(this, "Die Vorlage „" + templates[existingIndex].Name + "“ existiert bereits. Möchtest du sie überschreiben?", "Vorlage überschreiben", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (overwrite != DialogResult.Yes)
+                    return;
+            }
+
+            var updated = templates.Select(item => item.Clone()).ToList();
+            var newTemplate = new SelectionTemplate(name, columns);
+            if (existingIndex >= 0)
+                updated[existingIndex] = newTemplate;
+            else
+                updated.Add(newTemplate);
+            try
+            {
+                if (persistChanges)
+                    SelectionTemplateStore.Save(updated);
+                templates.Clear();
+                templates.AddRange(updated);
+                RefreshTemplateList(name);
+                editorStatusLabel.Text = "Vorlage „" + name + "“ gespeichert – " + columns.Count + " Spalten.";
+                editorStatusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, "Die Vorlage konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Speichern fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void DeleteSelectedTemplate()
+        {
+            var selected = templateComboBox.SelectedItem as SelectionTemplate;
+            if (selected == null)
+                return;
+            DialogResult confirmation = MessageBox.Show(this, "Möchtest du die Vorlage „" + selected.Name + "“ wirklich löschen?", "Vorlage löschen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (confirmation != DialogResult.Yes)
+                return;
+            var updated = templates.Where(item => !string.Equals(item.Name, selected.Name, StringComparison.OrdinalIgnoreCase)).Select(item => item.Clone()).ToList();
+            try
+            {
+                if (persistChanges)
+                    SelectionTemplateStore.Save(updated);
+                templates.Clear();
+                templates.AddRange(updated);
+                RefreshTemplateList(null);
+                RestoreInitialSelection();
+                editorStatusLabel.Text = "Vorlage „" + selected.Name + "“ gelöscht.";
+                editorStatusLabel.ForeColor = Muted;
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, "Die Vorlage konnte nicht gelöscht werden.\r\n\r\n" + exception.Message, "Löschen fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ApplySelectedTemplate()
+        {
+            var selected = templateComboBox.SelectedItem as SelectionTemplate;
+            if (selected == null)
+                return;
+            TemplateToApply = selected.Clone();
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+    }
+
     internal sealed class ImportWizardForm : Form
     {
         private readonly string csvPath;
@@ -921,16 +1443,18 @@ namespace Panda
         private readonly Button exportButton = new Button();
         private readonly Button resetButton = new Button();
         private readonly Button settingsButton = new Button();
+        private readonly Button templatesButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
         private AppSettings appSettings = AppSettings.Load();
+        private readonly List<SelectionTemplate> selectionTemplates = SelectionTemplateStore.Load();
 
         public MainForm()
         {
             Text = "PANDA – Pseudonymisierung alphanumerischer Nutzdaten";
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(1050, 680);
+            MinimumSize = new Size(1180, 680);
             Size = new Size(1320, 820);
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
@@ -1042,6 +1566,11 @@ namespace Panda
             settingsButton.Click += delegate { OpenSettings(); };
             toolbar.Controls.Add(settingsButton, 7, 0);
 
+            templatesButton.Text = "Vorlagen";
+            StyleSecondaryButton(templatesButton);
+            templatesButton.Click += delegate { OpenSelectionTemplates(); };
+            toolbar.Controls.Add(templatesButton, 8, 0);
+
             fileLabel.Text = "Noch keine CSV geladen";
             fileLabel.ForeColor = Muted;
             fileLabel.AutoEllipsis = true;
@@ -1052,7 +1581,7 @@ namespace Panda
 
             var hint = new Label
             {
-                Text = "Tipp: Strg oder Umschalt gedrückt halten, um mehrere Zellen zu markieren.",
+                Text = "Tipp: Spaltenkopf anklicken; mit Strg weitere Spalten ergänzen.",
                 ForeColor = Muted,
                 AutoEllipsis = true,
                 Dock = DockStyle.Fill,
@@ -1202,6 +1731,7 @@ namespace Panda
             {
                 grid.RowPostPaint += DrawOriginalRowHeader;
                 grid.RowHeaderMouseClick += ToggleOriginalRow;
+                grid.ColumnHeaderMouseClick += SelectOriginalColumn;
                 grid.Scroll += delegate { SyncScroll(originalGrid, resultGrid); };
             }
             else
@@ -1258,6 +1788,7 @@ namespace Panda
             row.Tag = isSelected;
             foreach (DataGridViewCell cell in row.Cells)
                 cell.Selected = isSelected;
+            scopeComboBox.SelectedIndex = 0;
             originalGrid.InvalidateRow(args.RowIndex);
             BeginInvoke(new Action(RefreshCheckedRowSelections));
             statusLabel.Text = isSelected
@@ -1277,6 +1808,96 @@ namespace Panda
                     cell.Selected = true;
             }
             originalGrid.Invalidate();
+        }
+
+        private void SelectOriginalColumn(object sender, DataGridViewCellMouseEventArgs args)
+        {
+            SelectOriginalColumn(args.ColumnIndex, (ModifierKeys & Keys.Control) == Keys.Control);
+        }
+
+        internal void SelectOriginalColumn(int columnIndex, bool additive)
+        {
+            if (columnIndex < 0 || columnIndex >= originalGrid.Columns.Count)
+                return;
+            bool hasCheckedRows = originalGrid.Rows.Cast<DataGridViewRow>().Any(row => row.Tag is bool && (bool)row.Tag);
+            if (!additive || hasCheckedRows)
+            {
+                originalGrid.ClearSelection();
+                ClearCheckedRows();
+                additive = false;
+            }
+            bool allSelected = originalGrid.Rows.Count > 0 && originalGrid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[columnIndex].Selected);
+            bool selectColumn = !additive || !allSelected;
+            foreach (DataGridViewRow row in originalGrid.Rows)
+                row.Cells[columnIndex].Selected = selectColumn;
+            scopeComboBox.SelectedIndex = 0;
+            originalGrid.Invalidate();
+            string columnName = originalGrid.Columns[columnIndex].HeaderText;
+            statusLabel.Text = selectColumn
+                ? "Spalte „" + columnName + "“ vollständig ausgewählt. Mit Strg + Klick lassen sich weitere Spalten ergänzen."
+                : "Spalte „" + columnName + "“ aus der Auswahl entfernt.";
+            statusLabel.ForeColor = Muted;
+        }
+
+        internal int SelectedCellCount
+        {
+            get { return originalGrid.SelectedCells.Count; }
+        }
+
+        internal bool IsColumnFullySelected(int columnIndex)
+        {
+            return originalGrid.Rows.Count > 0
+                && originalGrid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[columnIndex].Selected);
+        }
+
+        private void ClearCheckedRows()
+        {
+            foreach (DataGridViewRow row in originalGrid.Rows)
+                row.Tag = false;
+            originalGrid.Invalidate();
+        }
+
+        private void OpenSelectionTemplates()
+        {
+            if (document == null)
+                return;
+            List<int> selectedColumns = originalGrid.SelectedCells
+                .Cast<DataGridViewCell>()
+                .Select(cell => cell.ColumnIndex)
+                .Distinct()
+                .OrderBy(index => index)
+                .ToList();
+            using (var dialog = new SelectionTemplatesForm(document.Headers, selectionTemplates, selectedColumns))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK && dialog.TemplateToApply != null)
+                    ApplySelectionTemplate(dialog.TemplateToApply);
+            }
+        }
+
+        private void ApplySelectionTemplate(SelectionTemplate template)
+        {
+            List<int> columns = SelectionTemplateStore.FindColumnIndices(document.Headers, template.Columns);
+            var missing = template.Columns
+                .Where(column => !document.Headers.Any(header => string.Equals(header, column, StringComparison.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (columns.Count == 0)
+            {
+                MessageBox.Show(this, "Keine Spalte der Vorlage „" + template.Name + "“ ist in der importierten CSV vorhanden.", "Vorlage nicht anwendbar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            originalGrid.ClearSelection();
+            ClearCheckedRows();
+            if (originalGrid.Rows.Count > 0)
+                originalGrid.CurrentCell = originalGrid.Rows[0].Cells[columns[0]];
+            foreach (int column in columns)
+                foreach (DataGridViewRow row in originalGrid.Rows)
+                    row.Cells[column].Selected = true;
+            scopeComboBox.SelectedIndex = 0;
+            originalGrid.Invalidate();
+            statusLabel.Text = "Vorlage „" + template.Name + "“ angewendet: " + columns.Count + " Spalten ausgewählt."
+                + (missing.Count == 0 ? string.Empty : " Nicht gefunden: " + string.Join(", ", missing.ToArray()) + ".");
+            statusLabel.ForeColor = missing.Count == 0 ? Color.FromArgb(29, 132, 88) : Color.FromArgb(188, 118, 24);
         }
 
         private void ImportCsv()
@@ -1513,6 +2134,7 @@ namespace Panda
             stepNumeric.Enabled = enabled;
             exportButton.Enabled = enabled;
             resetButton.Enabled = enabled;
+            templatesButton.Enabled = enabled;
             scopeComboBox.Refresh();
         }
 

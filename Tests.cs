@@ -8,6 +8,7 @@ namespace Panda
     {
         private static int failures;
 
+        [STAThread]
         private static void Main()
         {
             AssertEqual("BCD YZA", LetterShifter.Shift("ABC XYZ", 1), "shift up and wrap");
@@ -43,6 +44,34 @@ namespace Panda
             AssertEqual(true, confirmationUp.Contains("Betroffene Zellen: 12"), "confirmation affected cells");
             string confirmationDown = MainForm.BuildConfirmationMessage(-4, 20, true);
             AssertEqual(true, confirmationDown.Contains("Alle Werte werden um 4 runtergezählt."), "confirmation count down text");
+
+            var template = new SelectionTemplate("Vorname & Büro", new[] { "Vorname", "Büro|Nord" });
+            string serializedTemplate = SelectionTemplateStore.SerializeLine(template);
+            SelectionTemplate parsedTemplate;
+            AssertEqual(true, SelectionTemplateStore.TryParseLine(serializedTemplate, out parsedTemplate), "template parsing");
+            AssertEqual("Vorname & Büro", parsedTemplate.Name, "template name roundtrip");
+            AssertEqual("Büro|Nord", parsedTemplate.Columns[1], "template column escaping");
+            AssertEqual(false, SelectionTemplateStore.TryParseLine("ungültig", out parsedTemplate), "invalid template rejected");
+            List<int> templateIndices = SelectionTemplateStore.FindColumnIndices(
+                new[] { "Kundennummer", "VORNAME", "Nachname", "Büro" },
+                new[] { "Vorname", "Büro", "Fehlt" });
+            AssertEqual(2, templateIndices.Count, "template matching count");
+            AssertEqual(1, templateIndices[0], "template matching ignores case");
+            AssertEqual(3, templateIndices[1], "template matching office");
+
+            using (var form = new MainForm())
+            {
+                form.LoadPreviewData();
+                form.SelectOriginalColumn(1, false);
+                AssertEqual(4, form.SelectedCellCount, "column header selects complete column");
+                AssertEqual(true, form.IsColumnFullySelected(1), "first selected column is complete");
+                form.SelectOriginalColumn(3, true);
+                AssertEqual(8, form.SelectedCellCount, "ctrl column header adds column");
+                AssertEqual(true, form.IsColumnFullySelected(3), "second selected column is complete");
+                form.SelectOriginalColumn(1, true);
+                AssertEqual(4, form.SelectedCellCount, "ctrl column header removes column");
+                AssertEqual(false, form.IsColumnFullySelected(1), "removed column is no longer complete");
+            }
 
             string tempPath = Path.Combine(Path.GetTempPath(), "csv-buchstaben-test-" + Guid.NewGuid().ToString("N") + ".csv");
             try

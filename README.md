@@ -25,7 +25,7 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 2. Festlegen, ob die erste Zeile Überschriften enthält.
 3. Spalten an- oder abwählen. Die Dateivorschau aktualisiert sich sofort.
 4. Im Importfenster **Importieren** anklicken.
-5. Links einzelne oder mehrere Zellen markieren. Über die Checkbox neben einer Zeilennummer lässt sich die komplette Zeile auswählen. Alternativ **Alle Einträge** wählen.
+5. Links einzelne oder mehrere Zellen markieren. Ein Klick auf eine Spaltenüberschrift markiert die komplette Spalte; mit **Strg + Klick** lassen sich weitere Spalten ergänzen oder entfernen. Über die Checkbox neben einer Zeilennummer lässt sich die komplette Zeile auswählen. Alternativ **Alle Einträge** wählen.
 6. Schrittweite festlegen und **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
 7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern.
 
@@ -36,6 +36,12 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 Standardmäßig zeigt PANDA vor jeder Umwandlung eine Bestätigung mit Richtung, gewähltem Zählwert und Anzahl der betroffenen Zellen. Diese Abfrage kann im Einstellungsfenster deaktiviert werden.
 
 Auswahlmarkierungen werden ausschließlich in der linken Originaltabelle dargestellt.
+
+## Auswahlvorlagen
+
+Über **Vorlagen** lassen sich häufig verwendete Spaltenkombinationen speichern, zum Beispiel „Vorname und Büro“. Beim Öffnen des Dialogs sind die aktuell markierten Spalten bereits vorausgewählt. Gespeicherte Vorlagen können angewendet, überschrieben oder gelöscht werden und stehen nach dem nächsten Programmstart weiterhin zur Verfügung.
+
+Vorlagen werden anhand der Spaltenüberschriften angewendet. Fehlt eine gespeicherte Spalte in einer später importierten CSV, markiert PANDA die vorhandenen Spalten und weist in der Statuszeile auf fehlende Spalten hin.
 
 Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen, Satzzeichen und Umlaute bleiben unverändert.
 
