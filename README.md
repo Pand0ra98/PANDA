@@ -48,3 +48,7 @@ Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A`
 - `Program.cs` – Programmquellcode
 - `Installer.cs` / `Uninstaller.cs` – Setupquellcode
 - `build.ps1` / `Tests.cs` – Build und automatische Tests
+
+## Lizenz
+
+PANDA wird unter der [MIT-Lizenz](LICENSE) veröffentlicht. Nutzung, Veränderung und Weitergabe sind erlaubt, sofern der Lizenz- und Urheberhinweis erhalten bleibt.
