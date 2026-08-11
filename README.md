@@ -27,7 +27,7 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 4. Im Importfenster **Importieren** anklicken.
 5. Links einzelne oder mehrere Zellen markieren. Ein Klick auf eine Spaltenüberschrift markiert die komplette Spalte; mit **Strg + Klick** lassen sich weitere Spalten ergänzen oder entfernen. Über die Checkbox neben einer Zeilennummer lässt sich die komplette Zeile auswählen. Alternativ **Alle Einträge** wählen.
 6. Schrittweite festlegen und **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
-7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern.
+7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern. Im Exportdialog kann zwischen allen Zeilen, den ersten frei wählbaren `N` Zeilen, ausschließlich veränderten Zeilen oder einer eigenen Checkbox-Auswahl gewählt werden.
 
 ## Einstellungen
 
@@ -42,6 +42,17 @@ Auswahlmarkierungen werden ausschließlich in der linken Originaltabelle dargest
 Über **Vorlagen** lassen sich häufig verwendete Spaltenkombinationen speichern, zum Beispiel „Vorname und Büro“. Beim Öffnen des Dialogs sind die aktuell markierten Spalten bereits vorausgewählt. Gespeicherte Vorlagen können angewendet, überschrieben oder gelöscht werden und stehen nach dem nächsten Programmstart weiterhin zur Verfügung.
 
 Vorlagen werden anhand der Spaltenüberschriften angewendet. Fehlt eine gespeicherte Spalte in einer später importierten CSV, markiert PANDA die vorhandenen Spalten und weist in der Statuszeile auf fehlende Spalten hin.
+
+## Zeilenauswahl beim Export
+
+Vor dem Speichern zeigt PANDA einen eigenen Exportdialog. Dort stehen vier Möglichkeiten zur Verfügung:
+
+- **Alle Zeilen** exportieren,
+- nur die **ersten N Zeilen** exportieren,
+- automatisch nur **veränderte Zeilen** exportieren,
+- beliebige Zeilen über eine unabhängige **Checkbox-Auswahl** markieren.
+
+Die Checkboxen im Exportdialog beeinflussen die Markierungen für die Pseudonymisierung nicht. Bereits über die Zeilencheckboxen im Hauptfenster ausgewählte Zeilen werden als Vorauswahl übernommen. Ist dort nichts ausgewählt, werden erkannte veränderte Zeilen vorausgewählt.
 
 Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen, Satzzeichen und Umlaute bleiben unverändert.
 

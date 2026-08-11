@@ -73,6 +73,32 @@ namespace Panda
                 AssertEqual(false, form.IsColumnFullySelected(1), "removed column is no longer complete");
             }
 
+            AssertEqual(20, ExportRowSelector.SelectRows(20, ExportRowMode.All, 0, null, null).Count, "export all rows");
+            List<int> firstFive = ExportRowSelector.SelectRows(20, ExportRowMode.First, 5, null, null);
+            AssertEqual(5, firstFive.Count, "export first five count");
+            AssertEqual(4, firstFive[4], "export first five last index");
+            List<int> limitedFirst = ExportRowSelector.SelectRows(3, ExportRowMode.First, 10, null, null);
+            AssertEqual(3, limitedFirst.Count, "export first rows bounded by total");
+            List<int> customExport = ExportRowSelector.SelectRows(20, ExportRowMode.Custom, 0, null, new[] { 12, 4, 12, -1, 30 });
+            AssertEqual(2, customExport.Count, "custom export removes invalid duplicates");
+            AssertEqual(4, customExport[0], "custom export sorted first row");
+            AssertEqual(12, customExport[1], "custom export sorted second row");
+            var originalExportRows = new List<IList<string>>
+            {
+                new List<string> { "Anna", "Berlin" },
+                new List<string> { "Ben", "Hamburg" },
+                new List<string> { "Clara", "Köln" }
+            };
+            var changedExportRows = new List<IList<string>>
+            {
+                new List<string> { "Anna", "Berlin" },
+                new List<string> { "Cfo", "Hamburg" },
+                new List<string> { "Clara", "Köln" }
+            };
+            List<int> detectedChanges = ExportRowSelector.FindChangedRows(originalExportRows, changedExportRows);
+            AssertEqual(1, detectedChanges.Count, "changed export row count");
+            AssertEqual(1, detectedChanges[0], "changed export row index");
+
             string tempPath = Path.Combine(Path.GetTempPath(), "csv-buchstaben-test-" + Guid.NewGuid().ToString("N") + ".csv");
             try
             {

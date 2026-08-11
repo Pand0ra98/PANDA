@@ -11,8 +11,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 namespace Panda
 {
@@ -93,6 +93,29 @@ namespace Panda
                         bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     templatesForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--export-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                var exportRows = new List<IList<string>>();
+                for (int row = 1; row <= 20; row++)
+                    exportRows.Add(new List<string> { (1000 + row).ToString(), "Vorname " + row, "Büro " + ((row % 4) + 1) });
+                using (var exportForm = new ExportOptionsForm(
+                    new[] { "Kundennummer", "Vorname", "Büro" },
+                    exportRows,
+                    new[] { 4, 11 },
+                    new[] { 4, 11 }))
+                {
+                    exportForm.SelectCustomModeForPreview();
+                    exportForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(exportForm.Width, exportForm.Height))
+                    {
+                        exportForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, exportForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    exportForm.Close();
                 }
                 return;
             }
@@ -571,6 +594,379 @@ namespace Panda
             root.Controls.Add(footer, 0, 2);
             AcceptButton = saveButton;
             CancelButton = cancelButton;
+        }
+    }
+
+    internal enum ExportRowMode
+    {
+        All,
+        First,
+        Changed,
+        Custom
+    }
+
+    internal static class ExportRowSelector
+    {
+        internal static List<int> SelectRows(int rowCount, ExportRowMode mode, int firstCount, IEnumerable<int> changedRows, IEnumerable<int> customRows)
+        {
+            if (rowCount <= 0)
+                return new List<int>();
+            if (mode == ExportRowMode.All)
+                return Enumerable.Range(0, rowCount).ToList();
+            if (mode == ExportRowMode.First)
+                return Enumerable.Range(0, Math.Max(0, Math.Min(firstCount, rowCount))).ToList();
+            return Normalize(mode == ExportRowMode.Changed ? changedRows : customRows, rowCount);
+        }
+
+        internal static List<int> FindChangedRows(IList<IList<string>> originalRows, IList<IList<string>> currentRows)
+        {
+            var changed = new List<int>();
+            int rowCount = Math.Max(originalRows.Count, currentRows.Count);
+            for (int row = 0; row < rowCount; row++)
+            {
+                if (row >= originalRows.Count || row >= currentRows.Count
+                    || !originalRows[row].SequenceEqual(currentRows[row], StringComparer.Ordinal))
+                    changed.Add(row);
+            }
+            return changed;
+        }
+
+        private static List<int> Normalize(IEnumerable<int> rows, int rowCount)
+        {
+            return (rows ?? Enumerable.Empty<int>())
+                .Where(row => row >= 0 && row < rowCount)
+                .Distinct()
+                .OrderBy(row => row)
+                .ToList();
+        }
+    }
+
+    internal sealed class ExportOptionsForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly Color Green = Color.FromArgb(29, 132, 88);
+        private readonly IList<IList<string>> rows;
+        private readonly HashSet<int> changedRows;
+        private readonly HashSet<int> initialRows;
+        private readonly RadioButton allRadio = new RadioButton();
+        private readonly RadioButton firstRadio = new RadioButton();
+        private readonly RadioButton changedRadio = new RadioButton();
+        private readonly RadioButton customRadio = new RadioButton();
+        private readonly NumericUpDown firstCountNumeric = new NumericUpDown();
+        private readonly CheckedListBox rowList = new CheckedListBox();
+        private readonly Button selectAllButton = new Button();
+        private readonly Button selectNoneButton = new Button();
+        private readonly Button selectChangedButton = new Button();
+        private readonly Button continueButton = new Button();
+        private readonly Label summaryLabel = new Label();
+
+        public List<int> SelectedRowIndices { get; private set; }
+
+        public ExportOptionsForm(IList<string> headers, IList<IList<string>> rows, IEnumerable<int> changedRows, IEnumerable<int> initiallySelectedRows)
+        {
+            this.rows = rows;
+            this.changedRows = new HashSet<int>(changedRows ?? Enumerable.Empty<int>());
+            this.initialRows = new HashSet<int>(initiallySelectedRows ?? Enumerable.Empty<int>());
+            Text = "PANDA – CSV-Export";
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new Size(680, 600);
+            ClientSize = new Size(720, 650);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout(headers);
+            allRadio.Checked = true;
+            SetCheckedRows(this.initialRows);
+            UpdateState();
+        }
+
+        private void BuildLayout(IList<string> headers)
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 164));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Zeilen für den Export",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Lege fest, welche Zeilen in die neue CSV-Datei geschrieben werden.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var optionsCard = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                BackColor = Color.White,
+                Padding = new Padding(16, 10, 16, 10),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            for (int row = 0; row < 4; row++)
+                optionsCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            ConfigureRadio(allRadio, "Alle Zeilen (" + rows.Count + ")");
+            optionsCard.Controls.Add(allRadio, 0, 0);
+
+            var firstPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = new Padding(0)
+            };
+            ConfigureRadio(firstRadio, "Nur die ersten");
+            firstRadio.Width = 128;
+            firstPanel.Controls.Add(firstRadio);
+            firstCountNumeric.Minimum = 1;
+            firstCountNumeric.Maximum = Math.Max(1, rows.Count);
+            firstCountNumeric.Value = Math.Max(1, Math.Min(10, rows.Count));
+            firstCountNumeric.Width = 76;
+            firstCountNumeric.TextAlign = HorizontalAlignment.Center;
+            firstCountNumeric.Margin = new Padding(4, 4, 7, 3);
+            firstCountNumeric.ValueChanged += delegate { UpdateState(); };
+            firstPanel.Controls.Add(firstCountNumeric);
+            firstPanel.Controls.Add(new Label
+            {
+                Text = "Zeilen",
+                ForeColor = Navy,
+                AutoSize = true,
+                Margin = new Padding(0, 7, 0, 0)
+            });
+            optionsCard.Controls.Add(firstPanel, 0, 1);
+
+            ConfigureRadio(changedRadio, "Nur veränderte Zeilen (" + this.changedRows.Count + ")");
+            changedRadio.Enabled = this.changedRows.Count > 0;
+            optionsCard.Controls.Add(changedRadio, 0, 2);
+            ConfigureRadio(customRadio, "Eigene Zeilenauswahl über die Checkboxen unten");
+            optionsCard.Controls.Add(customRadio, 0, 3);
+            root.Controls.Add(optionsCard, 0, 1);
+
+            var selectionCard = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                BackColor = Color.White,
+                Padding = new Padding(16, 12, 16, 12),
+                Margin = new Padding(0)
+            };
+            selectionCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            selectionCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            selectionCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            selectionCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            selectionCard.Controls.Add(new Label
+            {
+                Text = "Freie Zeilenauswahl",
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 0);
+
+            var selectionButtons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = new Padding(0)
+            };
+            selectAllButton.Text = "Alle markieren";
+            selectNoneButton.Text = "Keine markieren";
+            selectChangedButton.Text = "Veränderte markieren";
+            foreach (Button button in new[] { selectAllButton, selectNoneButton, selectChangedButton })
+            {
+                StyleSecondaryButton(button);
+                button.Dock = DockStyle.None;
+                button.Width = button == selectChangedButton ? 160 : 130;
+                button.Height = 32;
+                button.Margin = new Padding(0, 3, 10, 3);
+                selectionButtons.Controls.Add(button);
+            }
+            selectAllButton.Click += delegate { customRadio.Checked = true; SetCheckedRows(Enumerable.Range(0, rows.Count)); UpdateState(); };
+            selectNoneButton.Click += delegate { customRadio.Checked = true; SetCheckedRows(new int[0]); UpdateState(); };
+            selectChangedButton.Click += delegate { customRadio.Checked = true; SetCheckedRows(this.changedRows); UpdateState(); };
+            selectionCard.Controls.Add(selectionButtons, 0, 1);
+
+            rowList.CheckOnClick = true;
+            rowList.Dock = DockStyle.Fill;
+            rowList.BorderStyle = BorderStyle.FixedSingle;
+            rowList.BackColor = Color.White;
+            rowList.ForeColor = Navy;
+            rowList.IntegralHeight = false;
+            rowList.ItemCheck += delegate
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(UpdateState));
+            };
+            for (int row = 0; row < rows.Count; row++)
+                rowList.Items.Add(BuildRowCaption(headers, row));
+            selectionCard.Controls.Add(rowList, 0, 2);
+            selectionCard.Controls.Add(new Label
+            {
+                Text = "Diese Checkboxen gelten nur für den Export und ändern keine Markierung im Hauptfenster.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 3);
+            root.Controls.Add(selectionCard, 0, 2);
+
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                Padding = new Padding(0, 12, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            summaryLabel.ForeColor = Muted;
+            summaryLabel.AutoEllipsis = true;
+            summaryLabel.Dock = DockStyle.Fill;
+            summaryLabel.TextAlign = ContentAlignment.MiddleLeft;
+            footer.Controls.Add(summaryLabel, 0, 0);
+            var cancelButton = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
+            StyleSecondaryButton(cancelButton);
+            footer.Controls.Add(cancelButton, 1, 0);
+            continueButton.Text = "Weiter";
+            StylePrimaryButton(continueButton);
+            continueButton.Click += delegate { ConfirmSelection(); };
+            footer.Controls.Add(continueButton, 3, 0);
+            root.Controls.Add(footer, 0, 3);
+            AcceptButton = continueButton;
+            CancelButton = cancelButton;
+        }
+
+        private void ConfigureRadio(RadioButton radio, string text)
+        {
+            radio.Text = text;
+            radio.ForeColor = Navy;
+            radio.AutoSize = true;
+            radio.Anchor = AnchorStyles.Left;
+            radio.Margin = new Padding(0, 6, 0, 4);
+            radio.CheckedChanged += delegate { UpdateState(); };
+        }
+
+        private string BuildRowCaption(IList<string> headers, int rowIndex)
+        {
+            var values = rows[rowIndex].Take(3).Select(value => value ?? string.Empty).ToArray();
+            string preview = string.Join("  |  ", values);
+            if (preview.Length > 100)
+                preview = preview.Substring(0, 97) + "...";
+            string changed = changedRows.Contains(rowIndex) ? "  •  verändert" : string.Empty;
+            return "Zeile " + (rowIndex + 1) + changed + "  —  " + preview;
+        }
+
+        private void StylePrimaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Blue;
+            button.ForeColor = Color.White;
+            button.Margin = new Padding(0);
+            button.Cursor = Cursors.Hand;
+            button.FlatAppearance.BorderSize = 0;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Margin = new Padding(0);
+            button.Cursor = Cursors.Hand;
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void SetCheckedRows(IEnumerable<int> selectedRows)
+        {
+            var selected = new HashSet<int>(selectedRows ?? Enumerable.Empty<int>());
+            for (int row = 0; row < rowList.Items.Count; row++)
+                rowList.SetItemChecked(row, selected.Contains(row));
+        }
+
+        private List<int> GetCheckedRows()
+        {
+            var selected = new List<int>();
+            for (int row = 0; row < rowList.Items.Count; row++)
+                if (rowList.GetItemChecked(row)) selected.Add(row);
+            return selected;
+        }
+
+        private ExportRowMode CurrentMode
+        {
+            get
+            {
+                if (firstRadio.Checked) return ExportRowMode.First;
+                if (changedRadio.Checked) return ExportRowMode.Changed;
+                if (customRadio.Checked) return ExportRowMode.Custom;
+                return ExportRowMode.All;
+            }
+        }
+
+        private List<int> GetCurrentSelection()
+        {
+            return ExportRowSelector.SelectRows(rows.Count, CurrentMode, (int)firstCountNumeric.Value, changedRows, GetCheckedRows());
+        }
+
+        private void UpdateState()
+        {
+            bool custom = customRadio.Checked;
+            firstCountNumeric.Enabled = firstRadio.Checked;
+            rowList.Enabled = custom;
+            selectAllButton.Enabled = custom;
+            selectNoneButton.Enabled = custom;
+            selectChangedButton.Enabled = custom && changedRows.Count > 0;
+            int count = GetCurrentSelection().Count;
+            summaryLabel.Text = count + " von " + rows.Count + " Zeilen werden exportiert.";
+            summaryLabel.ForeColor = count > 0 ? Green : Color.FromArgb(190, 60, 55);
+            continueButton.Enabled = count > 0;
+        }
+
+        private void ConfirmSelection()
+        {
+            List<int> selected = GetCurrentSelection();
+            if (selected.Count == 0)
+            {
+                MessageBox.Show(this, "Bitte wähle mindestens eine Zeile für den Export aus.", "Keine Zeilen ausgewählt", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SelectedRowIndices = selected;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        internal void SelectCustomModeForPreview()
+        {
+            customRadio.Checked = true;
+            UpdateState();
         }
     }
 
@@ -2078,6 +2474,30 @@ namespace Panda
             if (document == null)
                 return;
 
+            List<IList<string>> currentRows = GetResultRows();
+            if (currentRows.Count == 0)
+            {
+                MessageBox.Show(this, "Die importierte CSV enthält keine Datenzeilen.", "Keine Zeilen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            List<IList<string>> originalRows = document.Rows.Select(row => (IList<string>)row).ToList();
+            List<int> changedRows = ExportRowSelector.FindChangedRows(originalRows, currentRows);
+            List<int> initiallySelectedRows = originalGrid.Rows
+                .Cast<DataGridViewRow>()
+                .Where(row => row.Tag is bool && (bool)row.Tag)
+                .Select(row => row.Index)
+                .ToList();
+            if (initiallySelectedRows.Count == 0)
+                initiallySelectedRows = changedRows.ToList();
+
+            List<int> selectedRows;
+            using (var options = new ExportOptionsForm(document.Headers, currentRows, changedRows, initiallySelectedRows))
+            {
+                if (options.ShowDialog(this) != DialogResult.OK)
+                    return;
+                selectedRows = options.SelectedRowIndices;
+            }
+
             using (var dialog = new SaveFileDialog())
             {
                 dialog.Title = "Veränderte CSV exportieren";
@@ -2092,24 +2512,30 @@ namespace Panda
 
                 try
                 {
-                    var rows = new List<IList<string>>();
-                    foreach (DataGridViewRow gridRow in resultGrid.Rows)
-                    {
-                        var values = new List<string>();
-                        foreach (DataGridViewCell cell in gridRow.Cells)
-                            values.Add(Convert.ToString(cell.Value) ?? string.Empty);
-                        rows.Add(values);
-                    }
-                    CsvCodec.Save(dialog.FileName, document, rows);
-                    statusLabel.Text = "Export erfolgreich: " + dialog.FileName;
+                    var rowsToExport = selectedRows.Select(row => currentRows[row]).ToList();
+                    CsvCodec.Save(dialog.FileName, document, rowsToExport);
+                    statusLabel.Text = "Export erfolgreich: " + selectedRows.Count + " von " + currentRows.Count + " Zeilen gespeichert.";
                     statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
-                    MessageBox.Show(this, "Die veränderte CSV wurde erfolgreich gespeichert.", "Export abgeschlossen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(this, selectedRows.Count + " von " + currentRows.Count + " Zeilen wurden erfolgreich gespeichert.", "Export abgeschlossen", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception exception)
                 {
                     MessageBox.Show(this, "Die CSV-Datei konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Export fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+        }
+
+        private List<IList<string>> GetResultRows()
+        {
+            var rows = new List<IList<string>>();
+            foreach (DataGridViewRow gridRow in resultGrid.Rows)
+            {
+                var values = new List<string>();
+                foreach (DataGridViewCell cell in gridRow.Cells)
+                    values.Add(Convert.ToString(cell.Value) ?? string.Empty);
+                rows.Add(values);
+            }
+            return rows;
         }
 
         private void SyncScroll(DataGridView source, DataGridView target)
