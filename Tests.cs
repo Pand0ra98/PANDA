@@ -33,12 +33,21 @@ namespace Panda
             AssertEqual("C", filtered.Headers[0], "selected column order");
             AssertEqual("a2", filtered.Rows[1][1], "selected column values");
 
-            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False" });
+            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False", "CheckForUpdates=False", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
             AssertEqual(6, settings.DefaultShift, "settings default shift");
             AssertEqual(false, settings.ConfirmBeforeShift, "settings confirmation flag");
+            AssertEqual(false, settings.CheckForUpdates, "settings update check flag");
+            AssertEqual(123L, settings.LastUpdateCheckUtcTicks, "settings last update check");
+            AssertEqual("1.7.0", settings.LatestKnownVersion, "settings latest known version");
             var boundedSettings = AppSettings.Parse(new[] { "DefaultShift=99" });
             AssertEqual(25, boundedSettings.DefaultShift, "settings upper bound");
             AssertEqual("DefaultShift=6", settings.Serialize()[0], "settings serialization");
+            Version parsedUpdateVersion = UpdateChecker.ParseLatestVersion("{\"tag_name\":\"v1.7.0\"}");
+            AssertEqual("1.7.0", UpdateChecker.DisplayVersion(parsedUpdateVersion), "github update version parsing");
+            AssertEqual(true, UpdateChecker.IsNewer(parsedUpdateVersion, new Version(1, 6, 0, 0)), "new update detected");
+            AssertEqual(false, UpdateChecker.IsNewer(parsedUpdateVersion, new Version(1, 7, 0, 0)), "equal update ignored");
+            Version invalidUpdateVersion;
+            AssertEqual(false, UpdateChecker.TryParseVersionText("v1.7.0/../../datei", out invalidUpdateVersion), "unsafe update tag rejected");
             string confirmationUp = MainForm.BuildConfirmationMessage(6, 12, false);
             AssertEqual(true, confirmationUp.Contains("Die ausgewählten Werte werden um 6 hochgezählt."), "confirmation count up text");
             AssertEqual(true, confirmationUp.Contains("Betroffene Zellen: 12"), "confirmation affected cells");

@@ -1,18 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("PANDA")]
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.6.0.0")]
-[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
+[assembly: AssemblyFileVersion("1.7.0.0")]
 
 namespace Panda
 {
@@ -25,7 +30,7 @@ namespace Panda
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Length == 2 && string.Equals(args[0], "--screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                using (var form = new MainForm())
+                using (var form = new MainForm(false))
                 {
                     form.Size = new Size(1320, 820);
                     form.Show();
@@ -380,6 +385,10 @@ namespace Panda
     {
         public int DefaultShift = 1;
         public bool ConfirmBeforeShift = true;
+        public bool CheckForUpdates = true;
+        public long LastUpdateCheckUtcTicks;
+        public string LatestKnownVersion = string.Empty;
+        public string LastNotifiedVersion = string.Empty;
 
         private static string SettingsPath
         {
@@ -434,6 +443,30 @@ namespace Panda
                     if (bool.TryParse(value, out parsed))
                         settings.ConfirmBeforeShift = parsed;
                 }
+                else if (string.Equals(key, "CheckForUpdates", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool parsed;
+                    if (bool.TryParse(value, out parsed))
+                        settings.CheckForUpdates = parsed;
+                }
+                else if (string.Equals(key, "LastUpdateCheckUtcTicks", StringComparison.OrdinalIgnoreCase))
+                {
+                    long parsed;
+                    if (long.TryParse(value, out parsed) && parsed >= 0)
+                        settings.LastUpdateCheckUtcTicks = parsed;
+                }
+                else if (string.Equals(key, "LatestKnownVersion", StringComparison.OrdinalIgnoreCase))
+                {
+                    Version parsed;
+                    if (UpdateChecker.TryParseVersionText(value, out parsed))
+                        settings.LatestKnownVersion = UpdateChecker.DisplayVersion(parsed);
+                }
+                else if (string.Equals(key, "LastNotifiedVersion", StringComparison.OrdinalIgnoreCase))
+                {
+                    Version parsed;
+                    if (UpdateChecker.TryParseVersionText(value, out parsed))
+                        settings.LastNotifiedVersion = UpdateChecker.DisplayVersion(parsed);
+                }
             }
             return settings;
         }
@@ -443,8 +476,136 @@ namespace Panda
             return new[]
             {
                 "DefaultShift=" + DefaultShift,
-                "ConfirmBeforeShift=" + ConfirmBeforeShift
+                "ConfirmBeforeShift=" + ConfirmBeforeShift,
+                "CheckForUpdates=" + CheckForUpdates,
+                "LastUpdateCheckUtcTicks=" + LastUpdateCheckUtcTicks,
+                "LatestKnownVersion=" + LatestKnownVersion,
+                "LastNotifiedVersion=" + LastNotifiedVersion
             };
+        }
+    }
+
+    [DataContract]
+    internal sealed class GitHubReleaseResponse
+    {
+        [DataMember(Name = "tag_name")]
+        public string TagName { get; set; }
+    }
+
+    internal sealed class UpdateCheckResult
+    {
+        public Version LatestVersion;
+        public string ErrorMessage;
+        public bool Success { get { return LatestVersion != null && string.IsNullOrEmpty(ErrorMessage); } }
+    }
+
+    internal static class UpdateChecker
+    {
+        internal const string ReleasePageUrl = "https://github.com/Pand0ra98/PANDA/releases/latest";
+        private const string ApiUrl = "https://api.github.com/repos/Pand0ra98/PANDA/releases/latest";
+        private const int MaximumResponseBytes = 65536;
+
+        internal static UpdateCheckResult CheckLatestRelease()
+        {
+            try
+            {
+                string json = DownloadReleaseMetadata();
+                return new UpdateCheckResult { LatestVersion = ParseLatestVersion(json) };
+            }
+            catch (Exception exception)
+            {
+                return new UpdateCheckResult { ErrorMessage = exception.Message };
+            }
+        }
+
+        internal static Version ParseLatestVersion(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json) || Encoding.UTF8.GetByteCount(json) > MaximumResponseBytes)
+                throw new InvalidDataException("Die Updateantwort ist leer oder zu groß.");
+            var serializer = new DataContractJsonSerializer(typeof(GitHubReleaseResponse));
+            GitHubReleaseResponse release;
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json), false))
+                release = serializer.ReadObject(stream) as GitHubReleaseResponse;
+            Version version;
+            if (release == null || !TryParseVersionText(release.TagName, out version))
+                throw new InvalidDataException("GitHub hat keine gültige PANDA-Versionsnummer geliefert.");
+            return version;
+        }
+
+        internal static bool TryParseVersionText(string text, out Version version)
+        {
+            version = null;
+            if (string.IsNullOrWhiteSpace(text) || text.Length > 32)
+                return false;
+            string value = text.Trim();
+            if (value.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                value = value.Substring(1);
+            string[] parts = value.Split('.');
+            if (parts.Length < 2 || parts.Length > 4 || parts.Any(part => part.Length == 0 || part.Any(character => character < '0' || character > '9')))
+                return false;
+            Version parsed;
+            if (!Version.TryParse(value, out parsed) || parsed.Major < 0 || parsed.Minor < 0)
+                return false;
+            version = NormalizeVersion(parsed);
+            return true;
+        }
+
+        internal static bool IsNewer(Version candidate, Version current)
+        {
+            return NormalizeVersion(candidate).CompareTo(NormalizeVersion(current)) > 0;
+        }
+
+        internal static string DisplayVersion(Version version)
+        {
+            Version normalized = NormalizeVersion(version);
+            string value = normalized.Major + "." + normalized.Minor + "." + normalized.Build;
+            if (normalized.Revision > 0)
+                value += "." + normalized.Revision;
+            return value;
+        }
+
+        private static Version NormalizeVersion(Version version)
+        {
+            if (version == null)
+                return new Version(0, 0, 0, 0);
+            return new Version(version.Major, version.Minor, Math.Max(0, version.Build), Math.Max(0, version.Revision));
+        }
+
+        private static string DownloadReleaseMetadata()
+        {
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            var request = (HttpWebRequest)WebRequest.Create(ApiUrl);
+            request.Method = "GET";
+            request.Accept = "application/vnd.github+json";
+            request.UserAgent = "PANDA-UpdateCheck/1.7";
+            request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
+            request.AllowAutoRedirect = false;
+            request.Timeout = 10000;
+            request.ReadWriteTimeout = 10000;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                if (response.StatusCode != HttpStatusCode.OK
+                    || response.ResponseUri.Scheme != Uri.UriSchemeHttps
+                    || !string.Equals(response.ResponseUri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Die GitHub-Updateantwort stammt nicht von der erwarteten Adresse.");
+                if (response.ContentLength > MaximumResponseBytes)
+                    throw new InvalidDataException("Die GitHub-Updateantwort ist zu groß.");
+                using (Stream input = response.GetResponseStream())
+                using (var output = new MemoryStream())
+                {
+                    var buffer = new byte[4096];
+                    int total = 0;
+                    int read;
+                    while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        total += read;
+                        if (total > MaximumResponseBytes)
+                            throw new InvalidDataException("Die GitHub-Updateantwort ist zu groß.");
+                        output.Write(buffer, 0, read);
+                    }
+                    return new UTF8Encoding(false, true).GetString(output.ToArray());
+                }
+            }
         }
     }
 
@@ -456,9 +617,11 @@ namespace Panda
         private readonly Color Muted = Color.FromArgb(94, 108, 128);
         private readonly NumericUpDown defaultShiftNumeric = new NumericUpDown();
         private readonly CheckBox confirmationCheckBox = new CheckBox();
+        private readonly CheckBox updateCheckBox = new CheckBox();
 
         public int DefaultShift { get { return (int)defaultShiftNumeric.Value; } }
         public bool ConfirmBeforeShift { get { return confirmationCheckBox.Checked; } }
+        public bool CheckForUpdates { get { return updateCheckBox.Checked; } }
 
         public SettingsForm(AppSettings settings)
         {
@@ -467,7 +630,7 @@ namespace Panda
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(560, 330);
+            ClientSize = new Size(560, 382);
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -511,7 +674,7 @@ namespace Panda
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 4,
+                RowCount = 6,
                 BackColor = Color.White,
                 Padding = new Padding(18, 14, 18, 14),
                 Margin = new Padding(0, 0, 0, 12)
@@ -520,7 +683,9 @@ namespace Panda
             card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 12));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             var shiftLabel = new Label
             {
@@ -553,6 +718,13 @@ namespace Panda
             confirmationCheckBox.Anchor = AnchorStyles.Left;
             card.SetColumnSpan(confirmationCheckBox, 2);
             card.Controls.Add(confirmationCheckBox, 0, 3);
+            updateCheckBox.Text = "Beim Programmstart höchstens einmal täglich nach einer neuen Version suchen";
+            updateCheckBox.Checked = settings.CheckForUpdates;
+            updateCheckBox.AutoSize = true;
+            updateCheckBox.ForeColor = Navy;
+            updateCheckBox.Anchor = AnchorStyles.Left;
+            card.SetColumnSpan(updateCheckBox, 2);
+            card.Controls.Add(updateCheckBox, 0, 5);
             root.Controls.Add(card, 0, 1);
 
             var footer = new TableLayoutPanel
@@ -1840,14 +2012,23 @@ namespace Panda
         private readonly Button resetButton = new Button();
         private readonly Button settingsButton = new Button();
         private readonly Button templatesButton = new Button();
+        private readonly Button updateButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
         private AppSettings appSettings = AppSettings.Load();
         private readonly List<SelectionTemplate> selectionTemplates = SelectionTemplateStore.Load();
+        private readonly bool automaticUpdateChecksEnabled;
+        private bool updateCheckInProgress;
 
         public MainForm()
+            : this(true)
         {
+        }
+
+        internal MainForm(bool automaticUpdateChecksEnabled)
+        {
+            this.automaticUpdateChecksEnabled = automaticUpdateChecksEnabled;
             Text = "PANDA – Pseudonymisierung alphanumerischer Nutzdaten";
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1180, 680);
@@ -1860,6 +2041,8 @@ namespace Panda
             ConfigureGrid(originalGrid, true);
             ConfigureGrid(resultGrid, false);
             SetDocumentControlsEnabled(false);
+            if (automaticUpdateChecksEnabled)
+                Shown += delegate { InitializeUpdateCheck(); };
         }
 
         private void BuildLayout()
@@ -1894,6 +2077,20 @@ namespace Panda
                 AutoSize = true,
                 Location = new Point(2, 39)
             };
+            var updatePanel = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = 190,
+                BackColor = Background
+            };
+            updateButton.Text = "Updates prüfen";
+            StyleSecondaryButton(updateButton);
+            updateButton.Dock = DockStyle.None;
+            updateButton.Size = new Size(176, 34);
+            updateButton.Location = new Point(14, 5);
+            updateButton.Click += delegate { CheckForUpdates(true); };
+            updatePanel.Controls.Add(updateButton);
+            header.Controls.Add(updatePanel);
             header.Controls.Add(title);
             header.Controls.Add(subtitle);
             root.Controls.Add(header, 0, 0);
@@ -2073,6 +2270,7 @@ namespace Panda
 
                 appSettings.DefaultShift = dialog.DefaultShift;
                 appSettings.ConfirmBeforeShift = dialog.ConfirmBeforeShift;
+                appSettings.CheckForUpdates = dialog.CheckForUpdates;
                 try
                 {
                     appSettings.Save();
@@ -2084,6 +2282,131 @@ namespace Panda
                 {
                     MessageBox.Show(this, "Die Einstellungen konnten nicht gespeichert werden.\r\n\r\n" + exception.Message, "Speichern fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+            }
+        }
+
+        private void InitializeUpdateCheck()
+        {
+            RefreshUpdateButtonFromCache();
+            if (appSettings.CheckForUpdates && IsAutomaticUpdateCheckDue())
+                CheckForUpdates(false);
+        }
+
+        private bool IsAutomaticUpdateCheckDue()
+        {
+            if (appSettings.LastUpdateCheckUtcTicks <= 0)
+                return true;
+            try
+            {
+                var lastCheck = new DateTime(appSettings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
+                TimeSpan age = DateTime.UtcNow - lastCheck;
+                return age < TimeSpan.Zero || age >= TimeSpan.FromHours(24);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return true;
+            }
+        }
+
+        private void CheckForUpdates(bool userInitiated)
+        {
+            if (updateCheckInProgress)
+                return;
+            updateCheckInProgress = true;
+            updateButton.Enabled = false;
+            updateButton.Text = "Prüfung läuft ...";
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                UpdateCheckResult result = UpdateChecker.CheckLatestRelease();
+                try
+                {
+                    if (IsDisposed || Disposing || !IsHandleCreated)
+                        return;
+                    BeginInvoke(new Action(delegate { CompleteUpdateCheck(result, userInitiated); }));
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            });
+        }
+
+        private void CompleteUpdateCheck(UpdateCheckResult result, bool userInitiated)
+        {
+            updateCheckInProgress = false;
+            updateButton.Enabled = true;
+            if (!result.Success)
+            {
+                RefreshUpdateButtonFromCache();
+                if (userInitiated)
+                    MessageBox.Show(this, "Die Updateprüfung konnte nicht abgeschlossen werden.\r\n\r\n" + result.ErrorMessage, "Updateprüfung fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            Version current = Assembly.GetExecutingAssembly().GetName().Version;
+            string latestText = UpdateChecker.DisplayVersion(result.LatestVersion);
+            bool newer = UpdateChecker.IsNewer(result.LatestVersion, current);
+            appSettings.LastUpdateCheckUtcTicks = DateTime.UtcNow.Ticks;
+            appSettings.LatestKnownVersion = latestText;
+            try { appSettings.Save(); } catch { }
+            RefreshUpdateButtonFromCache();
+
+            if (!newer)
+            {
+                if (userInitiated)
+                    MessageBox.Show(this, "PANDA ist aktuell.\r\n\r\nInstallierte Version: " + UpdateChecker.DisplayVersion(current), "Keine Updates verfügbar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            bool notify = userInitiated || !string.Equals(appSettings.LastNotifiedVersion, latestText, StringComparison.OrdinalIgnoreCase);
+            if (!notify)
+                return;
+            appSettings.LastNotifiedVersion = latestText;
+            try { appSettings.Save(); } catch { }
+            DialogResult choice = MessageBox.Show(this,
+                "Eine neue PANDA-Version ist verfügbar.\r\n\r\n"
+                + "Installiert: " + UpdateChecker.DisplayVersion(current) + "\r\n"
+                + "Verfügbar: " + latestText + "\r\n\r\n"
+                + "PANDA lädt oder startet keine Datei automatisch. Möchtest du die offizielle GitHub-Release-Seite öffnen?",
+                "PANDA-Update verfügbar",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information,
+                MessageBoxDefaultButton.Button1);
+            if (choice == DialogResult.Yes)
+                OpenReleasePage();
+        }
+
+        private void RefreshUpdateButtonFromCache()
+        {
+            Version latest;
+            Version current = Assembly.GetExecutingAssembly().GetName().Version;
+            bool updateAvailable = UpdateChecker.TryParseVersionText(appSettings.LatestKnownVersion, out latest)
+                && UpdateChecker.IsNewer(latest, current);
+            if (updateAvailable)
+            {
+                updateButton.Text = "Update v" + UpdateChecker.DisplayVersion(latest) + " verfügbar";
+                updateButton.BackColor = Color.FromArgb(29, 157, 105);
+                updateButton.ForeColor = Color.White;
+                updateButton.FlatAppearance.BorderSize = 0;
+            }
+            else
+            {
+                updateButton.Text = "Updates prüfen";
+                updateButton.BackColor = Color.White;
+                updateButton.ForeColor = Navy;
+                updateButton.FlatAppearance.BorderSize = 1;
+                updateButton.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            }
+        }
+
+        private void OpenReleasePage()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(UpdateChecker.ReleasePageUrl) { UseShellExecute = true });
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, "Die Release-Seite konnte nicht geöffnet werden.\r\n\r\n" + UpdateChecker.ReleasePageUrl + "\r\n\r\n" + exception.Message, "Browser konnte nicht geöffnet werden", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

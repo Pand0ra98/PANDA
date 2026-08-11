@@ -14,13 +14,13 @@ $iconArgument = "/win32icon:$icon"
 
 if (-not (Test-Path -LiteralPath $icon)) { throw 'PANDA.ico fehlt.' }
 
-& $compiler /nologo /target:exe /main:Panda.Tests /out:$testExe /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $program $tests
+& $compiler /nologo /target:exe /main:Panda.Tests /out:$testExe /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Runtime.Serialization.dll /reference:System.Windows.Forms.dll $program $tests
 if ($LASTEXITCODE -ne 0) { throw 'Test-Build fehlgeschlagen.' }
 
 & $testExe
 if ($LASTEXITCODE -ne 0) { throw 'Tests fehlgeschlagen.' }
 
-& $compiler /nologo /target:winexe /main:Panda.Program /optimize+ /platform:anycpu /out:$appExe $iconArgument /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll $program
+& $compiler /nologo /target:winexe /main:Panda.Program /optimize+ /platform:anycpu /out:$appExe $iconArgument /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Runtime.Serialization.dll /reference:System.Windows.Forms.dll $program
 if ($LASTEXITCODE -ne 0) { throw 'Programm-Build fehlgeschlagen.' }
 
 & $compiler /nologo /target:winexe /main:PandaUninstall.Program /optimize+ /platform:anycpu /out:$uninstallerExe $iconArgument /reference:System.dll /reference:System.Core.dll /reference:System.Windows.Forms.dll $uninstallerSource

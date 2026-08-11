@@ -35,6 +35,8 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 
 Standardmäßig zeigt PANDA vor jeder Umwandlung eine Bestätigung mit Richtung, gewähltem Zählwert und Anzahl der betroffenen Zellen. Diese Abfrage kann im Einstellungsfenster deaktiviert werden.
 
+Die automatische Updateprüfung kann ebenfalls in den Einstellungen deaktiviert werden. Wenn sie aktiv ist, fragt PANDA höchstens einmal innerhalb von 24 Stunden die aktuelle Versionsnummer ab.
+
 Auswahlmarkierungen werden ausschließlich in der linken Originaltabelle dargestellt.
 
 ## Auswahlvorlagen
@@ -53,6 +55,12 @@ Vor dem Speichern zeigt PANDA einen eigenen Exportdialog. Dort stehen vier Mögl
 - beliebige Zeilen über eine unabhängige **Checkbox-Auswahl** markieren.
 
 Die Checkboxen im Exportdialog beeinflussen die Markierungen für die Pseudonymisierung nicht. Bereits über die Zeilencheckboxen im Hauptfenster ausgewählte Zeilen werden als Vorauswahl übernommen. Ist dort nichts ausgewählt, werden erkannte veränderte Zeilen vorausgewählt.
+
+## Updateprüfung
+
+Über **Updates prüfen** kann jederzeit manuell nach einer neuen PANDA-Version gesucht werden. PANDA verwendet dafür ausschließlich die fest hinterlegte GitHub-API-Adresse des offiziellen Repositories und wertet nur einen numerischen Versions-Tag aus.
+
+Die Funktion lädt und startet keine Dateien. Wenn eine neuere Version verfügbar ist, kann ausschließlich die fest im Programm hinterlegte offizielle GitHub-Release-Seite im Standardbrowser geöffnet werden. Von GitHub gelieferte Download- oder Weiterleitungsadressen werden nicht übernommen.
 
 Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen, Satzzeichen und Umlaute bleiben unverändert.
 
