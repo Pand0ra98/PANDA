@@ -16,6 +16,15 @@ namespace Panda
             AssertEqual("Öl 123!", LetterShifter.Shift("Öl 123!", 0), "zero shift");
             AssertEqual("Öm 123!", LetterShifter.Shift("Öl 123!", 1), "non A-Z characters unchanged");
 
+            using (var quickForm = new QuickConversionForm(6))
+            {
+                quickForm.SetInputText("Abc XYZ 123");
+                quickForm.ApplyShiftForTest(2);
+                AssertEqual("Cde ZAB 123", quickForm.ResultText, "quick conversion up");
+                quickForm.ApplyShiftForTest(-2);
+                AssertEqual("Yza VWX 123", quickForm.ResultText, "quick conversion down");
+            }
+
             string sample = "Name;Notiz\r\n\"Meyer, Anna\";\"Hallo; Welt\"\r\nBob;\"Zeile 1\r\nZeile 2\"\r\n";
             AssertEqual(';', CsvCodec.DetectDelimiter(sample), "delimiter detection");
             List<List<string>> parsed = CsvCodec.Parse(sample, ';');
@@ -33,10 +42,11 @@ namespace Panda
             AssertEqual("C", filtered.Headers[0], "selected column order");
             AssertEqual("a2", filtered.Rows[1][1], "selected column values");
 
-            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False", "CheckForUpdates=False", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
+            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False", "CheckForUpdates=False", "AskForUpdateCheckOnStart=True", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
             AssertEqual(6, settings.DefaultShift, "settings default shift");
             AssertEqual(false, settings.ConfirmBeforeShift, "settings confirmation flag");
             AssertEqual(false, settings.CheckForUpdates, "settings update check flag");
+            AssertEqual(true, settings.AskForUpdateCheckOnStart, "settings ask on start update flag");
             AssertEqual(123L, settings.LastUpdateCheckUtcTicks, "settings last update check");
             AssertEqual("1.7.0", settings.LatestKnownVersion, "settings latest known version");
             var boundedSettings = AppSettings.Parse(new[] { "DefaultShift=99" });
@@ -48,6 +58,17 @@ namespace Panda
             AssertEqual(false, UpdateChecker.IsNewer(parsedUpdateVersion, new Version(1, 7, 0, 0)), "equal update ignored");
             Version invalidUpdateVersion;
             AssertEqual(false, UpdateChecker.TryParseVersionText("v1.7.0/../../datei", out invalidUpdateVersion), "unsafe update tag rejected");
+            var updateNow = new DateTime(2026, 8, 12, 8, 0, 0, DateTimeKind.Utc);
+            var disabledUpdates = new AppSettings { CheckForUpdates = false, AskForUpdateCheckOnStart = true };
+            AssertEqual(false, MainForm.ShouldAskForUpdateCheckOnStart(disabledUpdates), "disabled update prompt stays disabled");
+            AssertEqual(false, MainForm.ShouldCheckForUpdatesOnStart(disabledUpdates, updateNow), "disabled automatic updates stay disabled");
+            var promptedUpdates = new AppSettings { CheckForUpdates = true, AskForUpdateCheckOnStart = true, LastUpdateCheckUtcTicks = updateNow.Ticks };
+            AssertEqual(true, MainForm.ShouldAskForUpdateCheckOnStart(promptedUpdates), "enabled update prompt appears on start");
+            AssertEqual(false, MainForm.ShouldCheckForUpdatesOnStart(promptedUpdates, updateNow), "prompt mode prevents automatic request");
+            var dailyUpdates = new AppSettings { CheckForUpdates = true, AskForUpdateCheckOnStart = false, LastUpdateCheckUtcTicks = updateNow.AddHours(-2).Ticks };
+            AssertEqual(false, MainForm.ShouldCheckForUpdatesOnStart(dailyUpdates, updateNow), "daily update skips recent check");
+            dailyUpdates.LastUpdateCheckUtcTicks = updateNow.AddHours(-25).Ticks;
+            AssertEqual(true, MainForm.ShouldCheckForUpdatesOnStart(dailyUpdates, updateNow), "daily update runs after interval");
             string confirmationUp = MainForm.BuildConfirmationMessage(6, 12, false);
             AssertEqual(true, confirmationUp.Contains("Die ausgewählten Werte werden um 6 hochgezählt."), "confirmation count up text");
             AssertEqual(true, confirmationUp.Contains("Betroffene Zellen: 12"), "confirmation affected cells");

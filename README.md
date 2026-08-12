@@ -29,13 +29,17 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 6. Schrittweite festlegen und **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
 7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern. Im Exportdialog kann zwischen allen Zeilen, den ersten frei wählbaren `N` Zeilen, ausschließlich veränderten Zeilen oder einer eigenen Checkbox-Auswahl gewählt werden.
 
+## Schnellumwandlung
+
+Über **Schnellumwandlung** lässt sich Text auch ohne CSV-Import direkt bearbeiten. Text eingeben, einen Zählwert von 1 bis 25 wählen und anschließend **Hochzählen (+)** oder **Runterzählen (-)** anklicken. Das Ergebnis erscheint in einem separaten Feld und kann in die Zwischenablage kopiert werden. Die Eingabe wird nicht gespeichert und verändert keine bereits importierten CSV-Daten.
+
 ## Einstellungen
 
 Über **Einstellungen** lässt sich der Standard-Zählwert von 1 bis 25 festlegen. Dieser Wert wird benutzerbezogen gespeichert und beim nächsten Programmstart wiederhergestellt.
 
 Standardmäßig zeigt PANDA vor jeder Umwandlung eine Bestätigung mit Richtung, gewähltem Zählwert und Anzahl der betroffenen Zellen. Diese Abfrage kann im Einstellungsfenster deaktiviert werden.
 
-Die automatische Updateprüfung kann ebenfalls in den Einstellungen deaktiviert werden. Wenn sie aktiv ist, fragt PANDA höchstens einmal innerhalb von 24 Stunden die aktuelle Versionsnummer ab.
+Die automatische Updateprüfung kann ebenfalls in den Einstellungen deaktiviert werden. Wenn sie aktiv ist, prüft PANDA höchstens einmal innerhalb von 24 Stunden. Mit der zusätzlichen Option **Bei jedem Programmstart vorher nachfragen** erscheint stattdessen bei jedem Start eine Ja/Nein-Abfrage; erst nach einer Bestätigung wird die Versionsprüfung ausgeführt.
 
 Auswahlmarkierungen werden ausschließlich in der linken Originaltabelle dargestellt.
 

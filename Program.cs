@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.7.0.0")]
-[assembly: AssemblyFileVersion("1.7.0.0")]
+[assembly: AssemblyVersion("1.8.0.0")]
+[assembly: AssemblyFileVersion("1.8.0.0")]
 
 namespace Panda
 {
@@ -64,7 +64,7 @@ namespace Panda
             }
             if (args.Length == 2 && string.Equals(args[0], "--settings-screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                var previewSettings = new AppSettings { DefaultShift = 6, ConfirmBeforeShift = true };
+                var previewSettings = new AppSettings { DefaultShift = 6, ConfirmBeforeShift = true, AskForUpdateCheckOnStart = true };
                 using (var settingsForm = new SettingsForm(previewSettings))
                 {
                     settingsForm.Show();
@@ -75,6 +75,22 @@ namespace Panda
                         bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     settingsForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--quick-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var quickForm = new QuickConversionForm(6))
+                {
+                    quickForm.LoadPreviewData();
+                    quickForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(quickForm.Width, quickForm.Height))
+                    {
+                        quickForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, quickForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    quickForm.Close();
                 }
                 return;
             }
@@ -386,6 +402,7 @@ namespace Panda
         public int DefaultShift = 1;
         public bool ConfirmBeforeShift = true;
         public bool CheckForUpdates = true;
+        public bool AskForUpdateCheckOnStart;
         public long LastUpdateCheckUtcTicks;
         public string LatestKnownVersion = string.Empty;
         public string LastNotifiedVersion = string.Empty;
@@ -449,6 +466,13 @@ namespace Panda
                     if (bool.TryParse(value, out parsed))
                         settings.CheckForUpdates = parsed;
                 }
+                else if (string.Equals(key, "AskForUpdateCheckOnStart", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(key, "CheckForUpdatesEveryStart", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool parsed;
+                    if (bool.TryParse(value, out parsed))
+                        settings.AskForUpdateCheckOnStart = parsed;
+                }
                 else if (string.Equals(key, "LastUpdateCheckUtcTicks", StringComparison.OrdinalIgnoreCase))
                 {
                     long parsed;
@@ -478,6 +502,7 @@ namespace Panda
                 "DefaultShift=" + DefaultShift,
                 "ConfirmBeforeShift=" + ConfirmBeforeShift,
                 "CheckForUpdates=" + CheckForUpdates,
+                "AskForUpdateCheckOnStart=" + AskForUpdateCheckOnStart,
                 "LastUpdateCheckUtcTicks=" + LastUpdateCheckUtcTicks,
                 "LatestKnownVersion=" + LatestKnownVersion,
                 "LastNotifiedVersion=" + LastNotifiedVersion
@@ -577,7 +602,7 @@ namespace Panda
             var request = (HttpWebRequest)WebRequest.Create(ApiUrl);
             request.Method = "GET";
             request.Accept = "application/vnd.github+json";
-            request.UserAgent = "PANDA-UpdateCheck/1.7";
+            request.UserAgent = "PANDA-UpdateCheck/1.8";
             request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
             request.AllowAutoRedirect = false;
             request.Timeout = 10000;
@@ -618,10 +643,12 @@ namespace Panda
         private readonly NumericUpDown defaultShiftNumeric = new NumericUpDown();
         private readonly CheckBox confirmationCheckBox = new CheckBox();
         private readonly CheckBox updateCheckBox = new CheckBox();
+        private readonly CheckBox askForUpdateCheckBox = new CheckBox();
 
         public int DefaultShift { get { return (int)defaultShiftNumeric.Value; } }
         public bool ConfirmBeforeShift { get { return confirmationCheckBox.Checked; } }
         public bool CheckForUpdates { get { return updateCheckBox.Checked; } }
+        public bool AskForUpdateCheckOnStart { get { return askForUpdateCheckBox.Checked; } }
 
         public SettingsForm(AppSettings settings)
         {
@@ -630,7 +657,7 @@ namespace Panda
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(560, 382);
+            ClientSize = new Size(560, 430);
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -674,7 +701,7 @@ namespace Panda
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 6,
+                RowCount = 8,
                 BackColor = Color.White,
                 Padding = new Padding(18, 14, 18, 14),
                 Margin = new Padding(0, 0, 0, 12)
@@ -686,6 +713,8 @@ namespace Panda
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 12));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 4));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             var shiftLabel = new Label
             {
@@ -718,13 +747,23 @@ namespace Panda
             confirmationCheckBox.Anchor = AnchorStyles.Left;
             card.SetColumnSpan(confirmationCheckBox, 2);
             card.Controls.Add(confirmationCheckBox, 0, 3);
-            updateCheckBox.Text = "Beim Programmstart höchstens einmal täglich nach einer neuen Version suchen";
+            updateCheckBox.Text = "Automatische Updateprüfung aktivieren (höchstens einmal täglich)";
             updateCheckBox.Checked = settings.CheckForUpdates;
             updateCheckBox.AutoSize = true;
             updateCheckBox.ForeColor = Navy;
             updateCheckBox.Anchor = AnchorStyles.Left;
             card.SetColumnSpan(updateCheckBox, 2);
             card.Controls.Add(updateCheckBox, 0, 5);
+            askForUpdateCheckBox.Text = "Stattdessen bei jedem Programmstart vorher nachfragen";
+            askForUpdateCheckBox.Checked = settings.AskForUpdateCheckOnStart;
+            askForUpdateCheckBox.AutoSize = true;
+            askForUpdateCheckBox.ForeColor = Navy;
+            askForUpdateCheckBox.Anchor = AnchorStyles.Left;
+            askForUpdateCheckBox.Margin = new Padding(22, 3, 3, 3);
+            card.SetColumnSpan(askForUpdateCheckBox, 2);
+            card.Controls.Add(askForUpdateCheckBox, 0, 7);
+            updateCheckBox.CheckedChanged += delegate { RefreshUpdateFrequencyState(); };
+            RefreshUpdateFrequencyState();
             root.Controls.Add(card, 0, 1);
 
             var footer = new TableLayoutPanel
@@ -766,6 +805,11 @@ namespace Panda
             root.Controls.Add(footer, 0, 2);
             AcceptButton = saveButton;
             CancelButton = cancelButton;
+        }
+
+        private void RefreshUpdateFrequencyState()
+        {
+            askForUpdateCheckBox.Enabled = updateCheckBox.Checked;
         }
     }
 
@@ -1994,6 +2038,248 @@ namespace Panda
         }
     }
 
+    internal sealed class QuickConversionForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly TextBox inputTextBox = new TextBox();
+        private readonly TextBox resultTextBox = new TextBox();
+        private readonly NumericUpDown shiftNumeric = new NumericUpDown();
+        private readonly Button copyButton = new Button();
+
+        internal string ResultText { get { return resultTextBox.Text; } }
+
+        public QuickConversionForm(int defaultShift)
+        {
+            Text = "PANDA – Schnellumwandlung";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ClientSize = new Size(720, 590);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout(defaultShift);
+        }
+
+        private void BuildLayout(int defaultShift)
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Schnellumwandlung",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Text direkt umwandeln – unabhängig von einer importierten CSV-Datei.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var card = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 5,
+                BackColor = Color.White,
+                Padding = new Padding(18, 14, 18, 14),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            root.Controls.Add(card, 0, 1);
+
+            card.Controls.Add(CreateSectionLabel("Eingabetext"), 0, 0);
+            ConfigureTextBox(inputTextBox, false);
+            card.Controls.Add(inputTextBox, 0, 1);
+
+            var controls = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 6,
+                RowCount = 1,
+                Padding = new Padding(0, 10, 0, 8),
+                Margin = new Padding(0)
+            };
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
+            controls.Controls.Add(new Label
+            {
+                Text = "Zählwert",
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 0);
+            shiftNumeric.Minimum = 1;
+            shiftNumeric.Maximum = 25;
+            shiftNumeric.Value = Math.Max(1, Math.Min(25, defaultShift));
+            shiftNumeric.TextAlign = HorizontalAlignment.Center;
+            shiftNumeric.Dock = DockStyle.Fill;
+            shiftNumeric.Margin = new Padding(0);
+            controls.Controls.Add(shiftNumeric, 1, 0);
+            var upButton = CreateActionButton("Hochzählen  +", Color.FromArgb(29, 157, 105));
+            upButton.Click += delegate { ApplyShift((int)shiftNumeric.Value); };
+            controls.Controls.Add(upButton, 3, 0);
+            var downButton = CreateActionButton("Runterzählen  −", Color.FromArgb(230, 91, 84));
+            downButton.Click += delegate { ApplyShift(-(int)shiftNumeric.Value); };
+            controls.Controls.Add(downButton, 5, 0);
+            card.Controls.Add(controls, 0, 2);
+
+            card.Controls.Add(CreateSectionLabel("Ergebnis"), 0, 3);
+            ConfigureTextBox(resultTextBox, true);
+            card.Controls.Add(resultTextBox, 0, 4);
+
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                Padding = new Padding(0, 10, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            copyButton.Text = "Ergebnis kopieren";
+            copyButton.Enabled = false;
+            StyleSecondaryButton(copyButton);
+            copyButton.Click += delegate { CopyResult(); };
+            var closeButton = new Button
+            {
+                Text = "Schließen",
+                DialogResult = DialogResult.Cancel,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Blue,
+                ForeColor = Color.White,
+                Margin = new Padding(0)
+            };
+            closeButton.FlatAppearance.BorderSize = 0;
+            footer.Controls.Add(copyButton, 1, 0);
+            footer.Controls.Add(closeButton, 3, 0);
+            root.Controls.Add(footer, 0, 2);
+            CancelButton = closeButton;
+        }
+
+        private Label CreateSectionLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+        }
+
+        private static void ConfigureTextBox(TextBox textBox, bool readOnly)
+        {
+            textBox.Multiline = true;
+            textBox.AcceptsReturn = true;
+            textBox.AcceptsTab = true;
+            textBox.ScrollBars = ScrollBars.Vertical;
+            textBox.Dock = DockStyle.Fill;
+            textBox.ReadOnly = readOnly;
+            textBox.BackColor = readOnly ? Color.FromArgb(248, 250, 253) : Color.White;
+            textBox.BorderStyle = BorderStyle.FixedSingle;
+            textBox.Margin = new Padding(0);
+        }
+
+        private static Button CreateActionButton(string text, Color background)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = background,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0)
+            };
+            button.FlatAppearance.BorderSize = 0;
+            return button;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Cursor = Cursors.Hand;
+            button.Margin = new Padding(0);
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void ApplyShift(int amount)
+        {
+            resultTextBox.Text = LetterShifter.Shift(inputTextBox.Text, amount);
+            copyButton.Enabled = resultTextBox.TextLength > 0;
+        }
+
+        private void CopyResult()
+        {
+            if (resultTextBox.TextLength == 0)
+                return;
+            try
+            {
+                Clipboard.SetText(resultTextBox.Text);
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, "Das Ergebnis konnte nicht in die Zwischenablage kopiert werden.\r\n\r\n" + exception.Message, "Kopieren fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        internal void SetInputText(string value)
+        {
+            inputTextBox.Text = value ?? string.Empty;
+        }
+
+        internal void ApplyShiftForTest(int amount)
+        {
+            ApplyShift(amount);
+        }
+
+        internal void LoadPreviewData()
+        {
+            inputTextBox.Text = "Anna Meyer\r\nBüro 12 – Raum Nord";
+            ApplyShift((int)shiftNumeric.Value);
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private readonly Color Navy = Color.FromArgb(24, 38, 58);
@@ -2013,6 +2299,7 @@ namespace Panda
         private readonly Button settingsButton = new Button();
         private readonly Button templatesButton = new Button();
         private readonly Button updateButton = new Button();
+        private readonly Button quickConversionButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
@@ -2077,20 +2364,27 @@ namespace Panda
                 AutoSize = true,
                 Location = new Point(2, 39)
             };
-            var updatePanel = new Panel
+            var headerActions = new Panel
             {
                 Dock = DockStyle.Right,
-                Width = 190,
+                Width = 382,
                 BackColor = Background
             };
+            quickConversionButton.Text = "Schnellumwandlung";
+            StyleSecondaryButton(quickConversionButton);
+            quickConversionButton.Dock = DockStyle.None;
+            quickConversionButton.Size = new Size(176, 34);
+            quickConversionButton.Location = new Point(0, 5);
+            quickConversionButton.Click += delegate { OpenQuickConversion(); };
+            headerActions.Controls.Add(quickConversionButton);
             updateButton.Text = "Updates prüfen";
             StyleSecondaryButton(updateButton);
             updateButton.Dock = DockStyle.None;
             updateButton.Size = new Size(176, 34);
-            updateButton.Location = new Point(14, 5);
+            updateButton.Location = new Point(190, 5);
             updateButton.Click += delegate { CheckForUpdates(true); };
-            updatePanel.Controls.Add(updateButton);
-            header.Controls.Add(updatePanel);
+            headerActions.Controls.Add(updateButton);
+            header.Controls.Add(headerActions);
             header.Controls.Add(title);
             header.Controls.Add(subtitle);
             root.Controls.Add(header, 0, 0);
@@ -2271,6 +2565,7 @@ namespace Panda
                 appSettings.DefaultShift = dialog.DefaultShift;
                 appSettings.ConfirmBeforeShift = dialog.ConfirmBeforeShift;
                 appSettings.CheckForUpdates = dialog.CheckForUpdates;
+                appSettings.AskForUpdateCheckOnStart = dialog.AskForUpdateCheckOnStart;
                 try
                 {
                     appSettings.Save();
@@ -2285,21 +2580,49 @@ namespace Panda
             }
         }
 
+        private void OpenQuickConversion()
+        {
+            using (var dialog = new QuickConversionForm(appSettings.DefaultShift))
+                dialog.ShowDialog(this);
+        }
+
         private void InitializeUpdateCheck()
         {
             RefreshUpdateButtonFromCache();
-            if (appSettings.CheckForUpdates && IsAutomaticUpdateCheckDue())
+            if (ShouldAskForUpdateCheckOnStart(appSettings))
+            {
+                DialogResult choice = MessageBox.Show(this,
+                    "Möchtest du jetzt prüfen, ob eine neue PANDA-Version verfügbar ist?\r\n\r\n"
+                    + "PANDA lädt oder startet dabei keine Datei automatisch.",
+                    "Nach Updates suchen?",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button1);
+                if (choice == DialogResult.Yes)
+                    CheckForUpdates(true);
+                return;
+            }
+            if (ShouldCheckForUpdatesOnStart(appSettings, DateTime.UtcNow))
                 CheckForUpdates(false);
         }
 
-        private bool IsAutomaticUpdateCheckDue()
+        internal static bool ShouldAskForUpdateCheckOnStart(AppSettings settings)
         {
-            if (appSettings.LastUpdateCheckUtcTicks <= 0)
+            return settings != null && settings.CheckForUpdates && settings.AskForUpdateCheckOnStart;
+        }
+
+        internal static bool ShouldCheckForUpdatesOnStart(AppSettings settings, DateTime utcNow)
+        {
+            if (settings == null || !settings.CheckForUpdates)
+                return false;
+            if (settings.AskForUpdateCheckOnStart)
+                return false;
+            if (settings.LastUpdateCheckUtcTicks <= 0)
                 return true;
             try
             {
-                var lastCheck = new DateTime(appSettings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
-                TimeSpan age = DateTime.UtcNow - lastCheck;
+                var lastCheck = new DateTime(settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
+                TimeSpan age = utcNow.ToUniversalTime() - lastCheck;
                 return age < TimeSpan.Zero || age >= TimeSpan.FromHours(24);
             }
             catch (ArgumentOutOfRangeException)
