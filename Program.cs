@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.8.0.0")]
-[assembly: AssemblyFileVersion("1.8.0.0")]
+[assembly: AssemblyVersion("1.9.0.0")]
+[assembly: AssemblyFileVersion("1.9.0.0")]
 
 namespace Panda
 {
@@ -137,6 +137,33 @@ namespace Panda
                         bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     exportForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--filter-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                var filterRows = new List<IList<string>>
+                {
+                    new List<string> { "1001", "Anna", "Meyer", "Berlin" },
+                    new List<string> { "1002", "Jonas", "Schmidt", "Hamburg" },
+                    new List<string> { "1003", "Zoe", "Fischer", "München" },
+                    new List<string> { "1004", "Lena", "Wagner", "Köln" },
+                    new List<string> { "1005", "Mia", "Koch", "Mainz" }
+                };
+                var previewFilter = new RowFilter(3, new[] { "Hamburg" }, "M*");
+                using (var filterForm = new RowFilterForm(
+                    new[] { "Kundennummer", "Vorname", "Nachname", "Ort" },
+                    filterRows,
+                    previewFilter))
+                {
+                    filterForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(filterForm.Width, filterForm.Height))
+                    {
+                        filterForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, filterForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    filterForm.Close();
                 }
                 return;
             }
@@ -602,7 +629,7 @@ namespace Panda
             var request = (HttpWebRequest)WebRequest.Create(ApiUrl);
             request.Method = "GET";
             request.Accept = "application/vnd.github+json";
-            request.UserAgent = "PANDA-UpdateCheck/1.8";
+            request.UserAgent = "PANDA-UpdateCheck/1.9";
             request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
             request.AllowAutoRedirect = false;
             request.Timeout = 10000;
@@ -2280,6 +2307,410 @@ namespace Panda
         }
     }
 
+    internal sealed class RowFilter
+    {
+        public int ColumnIndex { get; private set; }
+        public List<string> ExactValues { get; private set; }
+        public string WildcardPattern { get; private set; }
+
+        public RowFilter(int columnIndex, IEnumerable<string> exactValues, string wildcardPattern)
+        {
+            ColumnIndex = columnIndex;
+            ExactValues = (exactValues ?? Enumerable.Empty<string>())
+                .Select(value => value ?? string.Empty)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            WildcardPattern = (wildcardPattern ?? string.Empty).Trim();
+        }
+
+        public bool IsEmpty
+        {
+            get { return ExactValues.Count == 0 && WildcardPattern.Length == 0; }
+        }
+    }
+
+    internal static class RowFilterEngine
+    {
+        internal static List<int> FindHiddenRows(IList<IList<string>> rows, RowFilter filter)
+        {
+            var hidden = new List<int>();
+            if (rows == null || filter == null || filter.IsEmpty || filter.ColumnIndex < 0)
+                return hidden;
+            var exactValues = new HashSet<string>(filter.ExactValues, StringComparer.OrdinalIgnoreCase);
+            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                IList<string> row = rows[rowIndex];
+                if (row == null || filter.ColumnIndex >= row.Count)
+                    continue;
+                string value = row[filter.ColumnIndex] ?? string.Empty;
+                bool exactMatch = exactValues.Contains(value);
+                bool wildcardMatch = filter.WildcardPattern.Length > 0 && WildcardIsMatch(value, filter.WildcardPattern);
+                if (exactMatch || wildcardMatch)
+                    hidden.Add(rowIndex);
+            }
+            return hidden;
+        }
+
+        internal static bool WildcardIsMatch(string value, string pattern)
+        {
+            value = value ?? string.Empty;
+            pattern = pattern ?? string.Empty;
+            int valueIndex = 0;
+            int patternIndex = 0;
+            int lastStar = -1;
+            int retryValueIndex = -1;
+            while (valueIndex < value.Length)
+            {
+                if (patternIndex < pattern.Length
+                    && (pattern[patternIndex] == '?' || CharactersEqual(value[valueIndex], pattern[patternIndex])))
+                {
+                    valueIndex++;
+                    patternIndex++;
+                }
+                else if (patternIndex < pattern.Length && pattern[patternIndex] == '*')
+                {
+                    lastStar = patternIndex++;
+                    retryValueIndex = valueIndex;
+                }
+                else if (lastStar >= 0)
+                {
+                    patternIndex = lastStar + 1;
+                    valueIndex = ++retryValueIndex;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            while (patternIndex < pattern.Length && pattern[patternIndex] == '*')
+                patternIndex++;
+            return patternIndex == pattern.Length;
+        }
+
+        private static bool CharactersEqual(char first, char second)
+        {
+            return char.ToUpperInvariant(first) == char.ToUpperInvariant(second);
+        }
+    }
+
+    internal sealed class RowFilterValueItem
+    {
+        public string Value { get; private set; }
+
+        public RowFilterValueItem(string value)
+        {
+            Value = value ?? string.Empty;
+        }
+
+        public override string ToString()
+        {
+            if (Value.Length == 0)
+                return "(leer)";
+            return Value.Replace("\r\n", " ↵ ").Replace("\r", " ↵ ").Replace("\n", " ↵ ");
+        }
+    }
+
+    internal sealed class RowFilterForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly IList<string> headers;
+        private readonly IList<IList<string>> rows;
+        private readonly RowFilter initialFilter;
+        private readonly ComboBox columnComboBox = new ComboBox();
+        private readonly CheckedListBox valuesList = new CheckedListBox();
+        private readonly TextBox wildcardTextBox = new TextBox();
+        private readonly Label selectionLabel = new Label();
+        private readonly Button applyButton = new Button();
+        private readonly Button clearFilterButton = new Button();
+
+        public RowFilter SelectedFilter { get; private set; }
+
+        public RowFilterForm(IList<string> headers, IList<IList<string>> rows, RowFilter initialFilter)
+        {
+            this.headers = headers ?? new List<string>();
+            this.rows = rows ?? new List<IList<string>>();
+            this.initialFilter = initialFilter;
+            Text = "PANDA – Zeilen filtern";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ClientSize = new Size(720, 650);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout();
+            LoadColumns();
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Zeilen ausblenden",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Wähle Spaltenwerte oder ergänze ein Wildcard-Muster.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var card = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 8,
+                BackColor = Color.White,
+                Padding = new Padding(18, 14, 18, 14),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            root.Controls.Add(card, 0, 1);
+
+            card.Controls.Add(new Label
+            {
+                Text = "Treffer werden nur ausgeblendet. Die zugrunde liegenden CSV-Daten bleiben erhalten.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            }, 0, 0);
+            card.Controls.Add(CreateSectionLabel("Spalte"), 0, 1);
+            columnComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            columnComboBox.Dock = DockStyle.Fill;
+            columnComboBox.Margin = new Padding(0, 2, 0, 6);
+            columnComboBox.SelectedIndexChanged += delegate { ReloadColumnValues(); };
+            card.Controls.Add(columnComboBox, 0, 2);
+
+            var valuesHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0) };
+            valuesHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            valuesHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            valuesHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            valuesHeader.Controls.Add(CreateSectionLabel("Diese vorhandenen Werte ausblenden"), 0, 0);
+            var allButton = CreateSmallButton("Alle wählen");
+            allButton.Click += delegate { SetAllValuesChecked(true); };
+            valuesHeader.Controls.Add(allButton, 1, 0);
+            var noneButton = CreateSmallButton("Keine");
+            noneButton.Click += delegate { SetAllValuesChecked(false); };
+            valuesHeader.Controls.Add(noneButton, 2, 0);
+            card.Controls.Add(valuesHeader, 0, 3);
+
+            valuesList.CheckOnClick = true;
+            valuesList.Dock = DockStyle.Fill;
+            valuesList.BorderStyle = BorderStyle.FixedSingle;
+            valuesList.HorizontalScrollbar = true;
+            valuesList.IntegralHeight = false;
+            valuesList.ItemCheck += delegate
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(UpdateSelectionState));
+            };
+            card.Controls.Add(valuesList, 0, 4);
+
+            var wildcardHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
+            wildcardHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            wildcardHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 34));
+            wildcardHeader.Controls.Add(CreateSectionLabel("Zusätzliches Wildcard-Muster"), 0, 0);
+            var helpButton = CreateSmallButton("?");
+            helpButton.Font = new Font("Segoe UI Semibold", 10F);
+            helpButton.Click += delegate { ShowWildcardHelp(); };
+            wildcardHeader.Controls.Add(helpButton, 1, 0);
+            card.Controls.Add(wildcardHeader, 0, 5);
+
+            wildcardTextBox.Dock = DockStyle.Fill;
+            wildcardTextBox.MaxLength = 200;
+            wildcardTextBox.Margin = new Padding(0, 2, 0, 6);
+            wildcardTextBox.TextChanged += delegate { UpdateSelectionState(); };
+            card.Controls.Add(wildcardTextBox, 0, 6);
+            selectionLabel.ForeColor = Muted;
+            selectionLabel.AutoEllipsis = true;
+            selectionLabel.Dock = DockStyle.Fill;
+            selectionLabel.TextAlign = ContentAlignment.MiddleLeft;
+            card.Controls.Add(selectionLabel, 0, 7);
+
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1, Padding = new Padding(0, 10, 0, 0) };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            clearFilterButton.Text = "Filter aufheben";
+            clearFilterButton.Enabled = initialFilter != null && !initialFilter.IsEmpty;
+            StyleSecondaryButton(clearFilterButton);
+            clearFilterButton.Click += delegate
+            {
+                SelectedFilter = null;
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            var cancelButton = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
+            StyleSecondaryButton(cancelButton);
+            applyButton.Text = "Anwenden";
+            applyButton.Dock = DockStyle.Fill;
+            applyButton.FlatStyle = FlatStyle.Flat;
+            applyButton.BackColor = Blue;
+            applyButton.ForeColor = Color.White;
+            applyButton.Margin = new Padding(0);
+            applyButton.FlatAppearance.BorderSize = 0;
+            applyButton.Click += delegate { ApplyFilter(); };
+            footer.Controls.Add(clearFilterButton, 1, 0);
+            footer.Controls.Add(cancelButton, 3, 0);
+            footer.Controls.Add(applyButton, 5, 0);
+            root.Controls.Add(footer, 0, 2);
+            CancelButton = cancelButton;
+            AcceptButton = applyButton;
+        }
+
+        private void LoadColumns()
+        {
+            columnComboBox.Items.Clear();
+            foreach (string header in headers)
+                columnComboBox.Items.Add(header);
+            if (columnComboBox.Items.Count == 0)
+                return;
+            int initialColumn = initialFilter == null ? 0 : initialFilter.ColumnIndex;
+            columnComboBox.SelectedIndex = Math.Max(0, Math.Min(columnComboBox.Items.Count - 1, initialColumn));
+            wildcardTextBox.Text = initialFilter == null ? string.Empty : initialFilter.WildcardPattern;
+            ReloadColumnValues();
+        }
+
+        private void ReloadColumnValues()
+        {
+            int columnIndex = columnComboBox.SelectedIndex;
+            if (columnIndex < 0)
+                return;
+            valuesList.BeginUpdate();
+            valuesList.Items.Clear();
+            var distinctValues = rows
+                .Where(row => row != null && columnIndex < row.Count)
+                .Select(row => row[columnIndex] ?? string.Empty)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            foreach (string value in distinctValues)
+            {
+                bool isChecked = initialFilter != null
+                    && initialFilter.ColumnIndex == columnIndex
+                    && initialFilter.ExactValues.Contains(value, StringComparer.OrdinalIgnoreCase);
+                valuesList.Items.Add(new RowFilterValueItem(value), isChecked);
+            }
+            valuesList.EndUpdate();
+            UpdateSelectionState();
+        }
+
+        private List<string> GetCheckedValues()
+        {
+            return valuesList.CheckedItems
+                .Cast<RowFilterValueItem>()
+                .Select(item => item.Value)
+                .ToList();
+        }
+
+        private void SetAllValuesChecked(bool isChecked)
+        {
+            for (int index = 0; index < valuesList.Items.Count; index++)
+                valuesList.SetItemChecked(index, isChecked);
+            BeginInvoke(new Action(UpdateSelectionState));
+        }
+
+        private void UpdateSelectionState()
+        {
+            int selectedCount = valuesList.CheckedItems.Count;
+            bool hasWildcard = !string.IsNullOrWhiteSpace(wildcardTextBox.Text);
+            selectionLabel.Text = selectedCount + " von " + valuesList.Items.Count + " Werten ausgewählt"
+                + (hasWildcard ? "  •  Wildcard aktiv" : string.Empty);
+            applyButton.Enabled = columnComboBox.SelectedIndex >= 0 && (selectedCount > 0 || hasWildcard);
+        }
+
+        private void ApplyFilter()
+        {
+            var filter = new RowFilter(columnComboBox.SelectedIndex, GetCheckedValues(), wildcardTextBox.Text);
+            if (filter.IsEmpty)
+                return;
+            SelectedFilter = filter;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        private void ShowWildcardHelp()
+        {
+            MessageBox.Show(this,
+                "Wildcards werden ohne Beachtung der Groß- und Kleinschreibung auf den vollständigen Zellinhalt angewendet.\r\n\r\n"
+                + "*  ersetzt beliebig viele Zeichen (auch kein Zeichen)\r\n"
+                + "?  ersetzt genau ein Zeichen\r\n\r\n"
+                + "Beispiele:\r\n"
+                + "M* blendet Meyer, München und Mainz aus.\r\n"
+                + "*Berlin* findet Berlin an beliebiger Stelle.\r\n"
+                + "B?b findet zum Beispiel Bob oder Bab.",
+                "Hilfe zu Wildcards",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private Label CreateSectionLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+        }
+
+        private Button CreateSmallButton(string text)
+        {
+            var button = new Button { Text = text };
+            StyleSecondaryButton(button);
+            button.Margin = new Padding(4, 3, 0, 3);
+            return button;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Cursor = Cursors.Hand;
+            button.Margin = new Padding(0);
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private readonly Color Navy = Color.FromArgb(24, 38, 58);
@@ -2300,9 +2731,13 @@ namespace Panda
         private readonly Button templatesButton = new Button();
         private readonly Button updateButton = new Button();
         private readonly Button quickConversionButton = new Button();
+        private readonly Button clearButton = new Button();
+        private readonly Button filterButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
+        private string baseFileLabelText = string.Empty;
+        private RowFilter activeRowFilter;
         private AppSettings appSettings = AppSettings.Load();
         private readonly List<SelectionTemplate> selectionTemplates = SelectionTemplateStore.Load();
         private readonly bool automaticUpdateChecksEnabled;
@@ -2343,7 +2778,7 @@ namespace Panda
                 BackColor = Background
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 98));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             Controls.Add(root);
@@ -2408,7 +2843,7 @@ namespace Panda
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             root.Controls.Add(toolbar, 0, 1);
 
             var importButton = CreateButton("Importieren", Blue, Color.White);
@@ -2458,13 +2893,23 @@ namespace Panda
             templatesButton.Click += delegate { OpenSelectionTemplates(); };
             toolbar.Controls.Add(templatesButton, 8, 0);
 
+            clearButton.Text = "Leeren";
+            StyleSecondaryButton(clearButton);
+            clearButton.Click += delegate { ClearCurrentCsv(); };
+            toolbar.Controls.Add(clearButton, 0, 1);
+
+            filterButton.Text = "Filter";
+            StyleSecondaryButton(filterButton);
+            filterButton.Click += delegate { OpenRowFilter(); };
+            toolbar.Controls.Add(filterButton, 1, 1);
+
             fileLabel.Text = "Noch keine CSV geladen";
             fileLabel.ForeColor = Muted;
             fileLabel.AutoEllipsis = true;
             fileLabel.Dock = DockStyle.Fill;
             fileLabel.TextAlign = ContentAlignment.MiddleLeft;
             toolbar.SetColumnSpan(fileLabel, 4);
-            toolbar.Controls.Add(fileLabel, 0, 1);
+            toolbar.Controls.Add(fileLabel, 2, 1);
 
             var hint = new Label
             {
@@ -2474,8 +2919,8 @@ namespace Panda
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleRight
             };
-            toolbar.SetColumnSpan(hint, 5);
-            toolbar.Controls.Add(hint, 4, 1);
+            toolbar.SetColumnSpan(hint, 3);
+            toolbar.Controls.Add(hint, 6, 1);
 
             var grids = new TableLayoutPanel
             {
@@ -2868,9 +3313,10 @@ namespace Panda
                 ClearCheckedRows();
                 additive = false;
             }
-            bool allSelected = originalGrid.Rows.Count > 0 && originalGrid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[columnIndex].Selected);
+            var visibleRows = originalGrid.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToList();
+            bool allSelected = visibleRows.Count > 0 && visibleRows.All(row => row.Cells[columnIndex].Selected);
             bool selectColumn = !additive || !allSelected;
-            foreach (DataGridViewRow row in originalGrid.Rows)
+            foreach (DataGridViewRow row in visibleRows)
                 row.Cells[columnIndex].Selected = selectColumn;
             scopeComboBox.SelectedIndex = 0;
             originalGrid.Invalidate();
@@ -2888,8 +3334,8 @@ namespace Panda
 
         internal bool IsColumnFullySelected(int columnIndex)
         {
-            return originalGrid.Rows.Count > 0
-                && originalGrid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[columnIndex].Selected);
+            var visibleRows = originalGrid.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToList();
+            return visibleRows.Count > 0 && visibleRows.All(row => row.Cells[columnIndex].Selected);
         }
 
         private void ClearCheckedRows()
@@ -2930,10 +3376,11 @@ namespace Panda
             }
             originalGrid.ClearSelection();
             ClearCheckedRows();
-            if (originalGrid.Rows.Count > 0)
-                originalGrid.CurrentCell = originalGrid.Rows[0].Cells[columns[0]];
+            DataGridViewRow firstVisibleRow = originalGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(row => row.Visible);
+            if (firstVisibleRow != null)
+                originalGrid.CurrentCell = firstVisibleRow.Cells[columns[0]];
             foreach (int column in columns)
-                foreach (DataGridViewRow row in originalGrid.Rows)
+                foreach (DataGridViewRow row in originalGrid.Rows.Cast<DataGridViewRow>().Where(row => row.Visible))
                     row.Cells[column].Selected = true;
             scopeComboBox.SelectedIndex = 0;
             originalGrid.Invalidate();
@@ -2962,8 +3409,11 @@ namespace Panda
                         document = wizard.SelectedDocument;
                     }
                     importedPath = dialog.FileName;
+                    activeRowFilter = null;
+                    filterButton.Text = "Filter";
                     PopulateGrids();
-                    fileLabel.Text = Path.GetFileName(dialog.FileName) + "  •  " + document.Rows.Count + " Zeilen  •  " + document.Headers.Count + " importierte Spalten  •  " + DelimiterName(document.Delimiter);
+                    baseFileLabelText = Path.GetFileName(dialog.FileName) + "  •  " + document.Rows.Count + " Zeilen  •  " + document.Headers.Count + " importierte Spalten  •  " + DelimiterName(document.Delimiter);
+                    UpdateFileLabel(0);
                     statusLabel.Text = "Import erfolgreich. Wähle links Zellen aus oder nutze ‚Alle Einträge‘.";
                     statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
                     SetDocumentControlsEnabled(true);
@@ -2975,6 +3425,94 @@ namespace Panda
                     statusLabel.ForeColor = Color.FromArgb(190, 60, 55);
                 }
             }
+        }
+
+        private void ClearCurrentCsv()
+        {
+            if (document == null)
+                return;
+            DialogResult confirmation = MessageBox.Show(this,
+                "Die aktuelle CSV wird aus PANDA entfernt. Nicht exportierte Änderungen gehen verloren.\r\n\r\n"
+                + "Die ursprüngliche Datei auf dem Datenträger bleibt unverändert. Möchtest du fortfahren?",
+                "Aktuelle CSV leeren?",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirmation != DialogResult.Yes)
+                return;
+            ClearDocumentCore();
+        }
+
+        private void ClearDocumentCore()
+        {
+            originalGrid.CurrentCell = null;
+            resultGrid.CurrentCell = null;
+            originalGrid.Columns.Clear();
+            resultGrid.Columns.Clear();
+            document = null;
+            importedPath = null;
+            baseFileLabelText = string.Empty;
+            activeRowFilter = null;
+            filterButton.Text = "Filter";
+            fileLabel.Text = "Noch keine CSV geladen";
+            statusLabel.Text = "Bereit – bitte eine CSV-Datei importieren.";
+            statusLabel.ForeColor = Muted;
+            scopeComboBox.SelectedIndex = 0;
+            SetDocumentControlsEnabled(false);
+        }
+
+        private void OpenRowFilter()
+        {
+            if (document == null)
+                return;
+            var rows = document.Rows.Select(row => (IList<string>)row).ToList();
+            using (var dialog = new RowFilterForm(document.Headers, rows, activeRowFilter))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                activeRowFilter = dialog.SelectedFilter;
+                ApplyRowFilter();
+            }
+        }
+
+        private void ApplyRowFilter()
+        {
+            if (document == null)
+                return;
+            var rows = document.Rows.Select(row => (IList<string>)row).ToList();
+            List<int> hiddenRows = RowFilterEngine.FindHiddenRows(rows, activeRowFilter);
+            var hiddenSet = new HashSet<int>(hiddenRows);
+            originalGrid.CurrentCell = null;
+            resultGrid.CurrentCell = null;
+            originalGrid.ClearSelection();
+            resultGrid.ClearSelection();
+            ClearCheckedRows();
+            for (int rowIndex = 0; rowIndex < document.Rows.Count; rowIndex++)
+            {
+                bool visible = !hiddenSet.Contains(rowIndex);
+                originalGrid.Rows[rowIndex].Visible = visible;
+                resultGrid.Rows[rowIndex].Visible = visible;
+            }
+            bool filterActive = activeRowFilter != null && !activeRowFilter.IsEmpty;
+            filterButton.Text = filterActive ? "Filter aktiv" : "Filter";
+            UpdateFileLabel(hiddenRows.Count);
+            if (filterActive)
+            {
+                string columnName = activeRowFilter.ColumnIndex >= 0 && activeRowFilter.ColumnIndex < document.Headers.Count
+                    ? document.Headers[activeRowFilter.ColumnIndex]
+                    : "Spalte";
+                statusLabel.Text = hiddenRows.Count + " von " + document.Rows.Count + " Zeilen über „" + columnName + "“ ausgeblendet. Ausgeblendete Zeilen werden nicht umgewandelt.";
+            }
+            else
+            {
+                statusLabel.Text = "Filter aufgehoben. Alle " + document.Rows.Count + " Zeilen werden wieder angezeigt.";
+            }
+            statusLabel.ForeColor = filterActive ? Color.FromArgb(188, 118, 24) : Muted;
+        }
+
+        private void UpdateFileLabel(int hiddenRowCount)
+        {
+            fileLabel.Text = baseFileLabelText + (hiddenRowCount > 0 ? "  •  " + hiddenRowCount + " ausgeblendet" : string.Empty);
         }
 
         private string DelimiterName(char delimiter)
@@ -3078,8 +3616,12 @@ namespace Panda
             if (scopeComboBox.SelectedIndex == 2)
             {
                 for (int row = 0; row < resultGrid.Rows.Count; row++)
+                {
+                    if (!resultGrid.Rows[row].Visible)
+                        continue;
                     for (int column = 0; column < resultGrid.Columns.Count; column++)
                         result.Add(Tuple.Create(row, column));
+                }
                 return result;
             }
 
@@ -3207,6 +3749,8 @@ namespace Panda
             exportButton.Enabled = enabled;
             resetButton.Enabled = enabled;
             templatesButton.Enabled = enabled;
+            clearButton.Enabled = enabled;
+            filterButton.Enabled = enabled;
             scopeComboBox.Refresh();
         }
 
@@ -3218,17 +3762,41 @@ namespace Panda
             document.Rows.Add(new List<string> { "1002", "Jonas", "Schmidt", "Hamburg" });
             document.Rows.Add(new List<string> { "1003", "Zoe", "Fischer", "München" });
             document.Rows.Add(new List<string> { "1004", "Lena", "Wagner", "Köln" });
+            importedPath = "beispiel.csv";
+            activeRowFilter = null;
             PopulateGrids();
             for (int column = 0; column < document.Headers.Count; column++)
                 resultGrid.Rows[0].Cells[column].Value = LetterShifter.Shift(document.Rows[0][column], 1);
             originalGrid.Rows[0].Tag = true;
             RefreshCheckedRowSelections();
-            fileLabel.Text = "beispiel.csv  •  4 Zeilen  •  4 Spalten  •  Trennzeichen: Semikolon";
+            baseFileLabelText = "beispiel.csv  •  4 Zeilen  •  4 Spalten  •  Trennzeichen: Semikolon";
+            UpdateFileLabel(0);
             statusLabel.Text = "3 von 4 Zellen verändert (+1).";
             statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
             SetDocumentControlsEnabled(true);
             scopeComboBox.SelectedIndex = 0;
             scopeComboBox.Refresh();
+        }
+
+        internal int VisibleRowCount
+        {
+            get { return originalGrid.Rows.Cast<DataGridViewRow>().Count(row => row.Visible); }
+        }
+
+        internal bool HasLoadedDocument
+        {
+            get { return document != null; }
+        }
+
+        internal void ApplyFilterForTest(RowFilter filter)
+        {
+            activeRowFilter = filter;
+            ApplyRowFilter();
+        }
+
+        internal void ClearDocumentForTest()
+        {
+            ClearDocumentCore();
         }
     }
 }

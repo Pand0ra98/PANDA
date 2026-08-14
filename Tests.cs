@@ -15,6 +15,28 @@ namespace Panda
             AssertEqual("Zab", LetterShifter.Shift("Abc", -1), "shift down and preserve case");
             AssertEqual("Öl 123!", LetterShifter.Shift("Öl 123!", 0), "zero shift");
             AssertEqual("Öm 123!", LetterShifter.Shift("Öl 123!", 1), "non A-Z characters unchanged");
+            AssertEqual(true, RowFilterEngine.WildcardIsMatch("Meyer", "M*"), "wildcard star match");
+            AssertEqual(true, RowFilterEngine.WildcardIsMatch("Bob", "B?b"), "wildcard question mark match");
+            AssertEqual(true, RowFilterEngine.WildcardIsMatch("BERLIN Mitte", "*berlin*"), "wildcard ignores case");
+            AssertEqual(false, RowFilterEngine.WildcardIsMatch("Köln", "M*"), "wildcard mismatch");
+            var filterRows = new List<IList<string>>
+            {
+                new List<string> { "Anna", "Berlin" },
+                new List<string> { "Ben", "Hamburg" },
+                new List<string> { "Clara", "München" },
+                new List<string> { "David", "Mainz" }
+            };
+            var combinedFilter = new RowFilter(1, new[] { "Hamburg" }, "M*");
+            List<int> hiddenFilterRows = RowFilterEngine.FindHiddenRows(filterRows, combinedFilter);
+            AssertEqual(3, hiddenFilterRows.Count, "combined exact and wildcard filter count");
+            AssertEqual(1, hiddenFilterRows[0], "exact filter row");
+            AssertEqual(2, hiddenFilterRows[1], "wildcard first row");
+            AssertEqual(3, hiddenFilterRows[2], "wildcard second row");
+            using (var filterForm = new RowFilterForm(new[] { "Name", "Ort" }, filterRows, combinedFilter))
+            {
+                filterForm.Show();
+                filterForm.Close();
+            }
 
             using (var quickForm = new QuickConversionForm(6))
             {
@@ -101,6 +123,14 @@ namespace Panda
                 form.SelectOriginalColumn(1, true);
                 AssertEqual(4, form.SelectedCellCount, "ctrl column header removes column");
                 AssertEqual(false, form.IsColumnFullySelected(1), "removed column is no longer complete");
+                form.ApplyFilterForTest(new RowFilter(3, new[] { "Hamburg" }, "M*"));
+                AssertEqual(2, form.VisibleRowCount, "filter hides matching rows in main view");
+                form.SelectOriginalColumn(1, false);
+                AssertEqual(2, form.SelectedCellCount, "column selection excludes hidden rows");
+                form.ApplyFilterForTest(null);
+                AssertEqual(4, form.VisibleRowCount, "clearing filter restores rows");
+                form.ClearDocumentForTest();
+                AssertEqual(false, form.HasLoadedDocument, "clear removes current document");
             }
 
             AssertEqual(20, ExportRowSelector.SelectRows(20, ExportRowMode.All, 0, null, null).Count, "export all rows");

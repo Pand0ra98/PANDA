@@ -29,6 +29,18 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 6. Schrittweite festlegen und **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
 7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern. Im Exportdialog kann zwischen allen Zeilen, den ersten frei wählbaren `N` Zeilen, ausschließlich veränderten Zeilen oder einer eigenen Checkbox-Auswahl gewählt werden.
 
+Mit **Leeren** wird die aktuelle CSV nach einer Sicherheitsabfrage aus PANDA entfernt, sodass eine neue Datei importiert werden kann. Die ursprüngliche Datei auf dem Datenträger wird dabei nicht gelöscht oder verändert.
+
+## Zeilenfilter
+
+Über **Filter** lassen sich Zeilen anhand einer ausgewählten Spalte ausblenden. PANDA zeigt dafür die vorhandenen Inhalte der Spalte als auswählbare Liste an. Mehrere exakte Werte und ein zusätzliches Wildcard-Muster können gemeinsam verwendet werden. Der kleine **?**-Button im Filterfenster erklärt die Platzhalter mit Beispielen.
+
+- `*` steht für beliebig viele Zeichen, beispielsweise blendet `M*` Werte wie „Meyer“ oder „München“ aus.
+- `?` steht für genau ein Zeichen, beispielsweise findet `B?b` sowohl „Bob“ als auch „Bab“.
+- Groß- und Kleinschreibung wird beim Filtern ignoriert.
+
+Der Filter blendet Treffer synchron in der Original- und Ergebnistabelle aus. Ausgeblendete Zeilen werden bei Umwandlungen nicht verändert, bleiben aber in den CSV-Daten erhalten und stehen im Exportdialog weiterhin zur Verfügung. Über **Filter aufheben** werden alle Zeilen wieder eingeblendet.
+
 ## Schnellumwandlung
 
 Über **Schnellumwandlung** lässt sich Text auch ohne CSV-Import direkt bearbeiten. Text eingeben, einen Zählwert von 1 bis 25 wählen und anschließend **Hochzählen (+)** oder **Runterzählen (-)** anklicken. Das Ergebnis erscheint in einem separaten Feld und kann in die Zwischenablage kopiert werden. Die Eingabe wird nicht gespeichert und verändert keine bereits importierten CSV-Daten.
