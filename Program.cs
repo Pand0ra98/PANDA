@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.9.0.0")]
-[assembly: AssemblyFileVersion("1.9.0.0")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
 namespace Panda
 {
@@ -30,7 +30,58 @@ namespace Panda
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Length == 2 && string.Equals(args[0], "--screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                using (var form = new MainForm(false))
+                using (var form = new MainForm(false, "Metro"))
+                {
+                    form.Size = new Size(1320, 820);
+                    form.Show();
+                    form.LoadPreviewData();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(form.Width, form.Height))
+                    {
+                        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    form.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--metro-empty-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var form = new MainForm(false, "Metro"))
+                {
+                    form.Size = new Size(1320, 820);
+                    form.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(form.Width, form.Height))
+                    {
+                        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    form.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--simple-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var form = new MainForm(false, "Metro"))
+                {
+                    form.Size = new Size(1320, 820);
+                    form.Show();
+                    form.LoadPreviewData();
+                    form.SetAdvancedShiftModeForTest(false);
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(form.Width, form.Height))
+                    {
+                        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    form.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--classic-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var form = new MainForm(false, "Classic"))
                 {
                     form.Size = new Size(1320, 820);
                     form.Show();
@@ -64,7 +115,7 @@ namespace Panda
             }
             if (args.Length == 2 && string.Equals(args[0], "--settings-screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                var previewSettings = new AppSettings { DefaultShift = 6, ConfirmBeforeShift = true, AskForUpdateCheckOnStart = true };
+                var previewSettings = new AppSettings { DefaultShiftSequence = "3-5-8-2", ConfirmBeforeShift = true, AskForUpdateCheckOnStart = true, InterfaceStyle = "Metro" };
                 using (var settingsForm = new SettingsForm(previewSettings))
                 {
                     settingsForm.Show();
@@ -80,7 +131,7 @@ namespace Panda
             }
             if (args.Length == 2 && string.Equals(args[0], "--quick-screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                using (var quickForm = new QuickConversionForm(6))
+                using (var quickForm = new QuickConversionForm("3-5-8-2"))
                 {
                     quickForm.LoadPreviewData();
                     quickForm.Show();
@@ -401,16 +452,29 @@ namespace Panda
     {
         public static string Shift(string value, int amount)
         {
-            if (string.IsNullOrEmpty(value) || amount == 0)
+            return Shift(value, new[] { amount });
+        }
+
+        public static string Shift(string value, IList<int> amounts)
+        {
+            if (string.IsNullOrEmpty(value) || amounts == null || amounts.Count == 0)
                 return value;
 
             var result = new StringBuilder(value.Length);
+            int letterIndex = 0;
             foreach (char character in value)
             {
+                int amount = amounts[letterIndex % amounts.Count];
                 if (character >= 'A' && character <= 'Z')
+                {
                     result.Append(ShiftInRange(character, 'A', 26, amount));
+                    letterIndex++;
+                }
                 else if (character >= 'a' && character <= 'z')
+                {
                     result.Append(ShiftInRange(character, 'a', 26, amount));
+                    letterIndex++;
+                }
                 else
                     result.Append(character);
             }
@@ -424,9 +488,81 @@ namespace Panda
         }
     }
 
+    internal static class ShiftSequence
+    {
+        internal static bool TryParse(string text, out List<int> values, out string errorMessage)
+        {
+            values = new List<int>();
+            errorMessage = string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                errorMessage = "Bitte gib mindestens einen Zählwert ein, zum Beispiel 3-5-8-2.";
+                return false;
+            }
+            if (text.Length > 200)
+            {
+                errorMessage = "Die Zählfolge ist zu lang.";
+                return false;
+            }
+            string[] parts = text.Split(new[] { '-', ',', ';', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0 || parts.Length > 32)
+            {
+                errorMessage = "Die Zählfolge muss aus 1 bis 32 Zahlen bestehen.";
+                return false;
+            }
+            foreach (string part in parts)
+            {
+                int value;
+                if (!int.TryParse(part, out value) || value < 1 || value > 25)
+                {
+                    errorMessage = "Jeder Zählwert muss eine ganze Zahl zwischen 1 und 25 sein.";
+                    values.Clear();
+                    return false;
+                }
+                values.Add(value);
+            }
+            return true;
+        }
+
+        internal static string Normalize(string text, string fallback)
+        {
+            List<int> values;
+            string error;
+            if (!TryParse(text, out values, out error))
+            {
+                if (!TryParse(fallback, out values, out error))
+                    values = new List<int> { 1 };
+            }
+            return Format(values);
+        }
+
+        internal static string Format(IEnumerable<int> values)
+        {
+            return string.Join("-", (values ?? Enumerable.Empty<int>()).Select(value => Math.Abs(value).ToString()).ToArray());
+        }
+
+        internal static List<int> ToFiveValues(IEnumerable<int> values)
+        {
+            var source = (values ?? Enumerable.Empty<int>()).Select(value => Math.Max(1, Math.Min(25, Math.Abs(value)))).Take(5).ToList();
+            while (source.Count < 5)
+                source.Add(1);
+            return source;
+        }
+
+        internal static string NormalizeForMainMode(string text)
+        {
+            List<int> values;
+            string errorMessage;
+            if (!TryParse(text, out values, out errorMessage))
+                return "1";
+            return values.Count == 1 ? Format(values) : Format(ToFiveValues(values));
+        }
+    }
+
     internal sealed class AppSettings
     {
-        public int DefaultShift = 1;
+        public string DefaultShiftSequence = "1";
+        public string InterfaceStyle = "Metro";
         public bool ConfirmBeforeShift = true;
         public bool CheckForUpdates = true;
         public bool AskForUpdateCheckOnStart;
@@ -475,11 +611,19 @@ namespace Panda
                     continue;
                 string key = line.Substring(0, separator).Trim();
                 string value = line.Substring(separator + 1).Trim();
-                if (string.Equals(key, "DefaultShift", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(key, "DefaultShiftSequence", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.DefaultShiftSequence = ShiftSequence.Normalize(value, settings.DefaultShiftSequence);
+                }
+                else if (string.Equals(key, "DefaultShift", StringComparison.OrdinalIgnoreCase))
                 {
                     int parsed;
                     if (int.TryParse(value, out parsed))
-                        settings.DefaultShift = Math.Max(1, Math.Min(25, parsed));
+                        settings.DefaultShiftSequence = Math.Max(1, Math.Min(25, parsed)).ToString();
+                }
+                else if (string.Equals(key, "InterfaceStyle", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.InterfaceStyle = string.Equals(value, "Classic", StringComparison.OrdinalIgnoreCase) ? "Classic" : "Metro";
                 }
                 else if (string.Equals(key, "ConfirmBeforeShift", StringComparison.OrdinalIgnoreCase))
                 {
@@ -526,7 +670,8 @@ namespace Panda
         {
             return new[]
             {
-                "DefaultShift=" + DefaultShift,
+                "DefaultShiftSequence=" + DefaultShiftSequence,
+                "InterfaceStyle=" + InterfaceStyle,
                 "ConfirmBeforeShift=" + ConfirmBeforeShift,
                 "CheckForUpdates=" + CheckForUpdates,
                 "AskForUpdateCheckOnStart=" + AskForUpdateCheckOnStart,
@@ -629,7 +774,7 @@ namespace Panda
             var request = (HttpWebRequest)WebRequest.Create(ApiUrl);
             request.Method = "GET";
             request.Accept = "application/vnd.github+json";
-            request.UserAgent = "PANDA-UpdateCheck/1.9";
+            request.UserAgent = "PANDA-UpdateCheck/2.0";
             request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
             request.AllowAutoRedirect = false;
             request.Timeout = 10000;
@@ -667,12 +812,14 @@ namespace Panda
         private readonly Color Blue = Color.FromArgb(41, 112, 255);
         private readonly Color Background = Color.FromArgb(244, 247, 251);
         private readonly Color Muted = Color.FromArgb(94, 108, 128);
-        private readonly NumericUpDown defaultShiftNumeric = new NumericUpDown();
+        private readonly TextBox defaultShiftSequenceTextBox = new TextBox();
+        private readonly ComboBox interfaceStyleComboBox = new ComboBox();
         private readonly CheckBox confirmationCheckBox = new CheckBox();
         private readonly CheckBox updateCheckBox = new CheckBox();
         private readonly CheckBox askForUpdateCheckBox = new CheckBox();
 
-        public int DefaultShift { get { return (int)defaultShiftNumeric.Value; } }
+        public string DefaultShiftSequence { get; private set; }
+        public string InterfaceStyle { get { return interfaceStyleComboBox.SelectedIndex == 1 ? "Classic" : "Metro"; } }
         public bool ConfirmBeforeShift { get { return confirmationCheckBox.Checked; } }
         public bool CheckForUpdates { get { return updateCheckBox.Checked; } }
         public bool AskForUpdateCheckOnStart { get { return askForUpdateCheckBox.Checked; } }
@@ -684,7 +831,7 @@ namespace Panda
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(560, 430);
+            ClientSize = new Size(600, 560);
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -728,24 +875,27 @@ namespace Panda
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 8,
+                RowCount = 11,
                 BackColor = Color.White,
                 Padding = new Padding(18, 14, 18, 14),
                 Margin = new Padding(0, 0, 0, 12)
             };
             card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 12));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 4));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             var shiftLabel = new Label
             {
-                Text = "Standard-Zählwert",
+                Text = "Standard-Zählfolge",
                 Font = new Font("Segoe UI Semibold", 10F),
                 ForeColor = Navy,
                 AutoSize = true,
@@ -755,19 +905,18 @@ namespace Panda
             card.SetColumnSpan(shiftLabel, 2);
             card.Controls.Add(new Label
             {
-                Text = "Dieser Wert wird beim Programmstart und nach dem Speichern voreingestellt.",
+                Text = "Ein Wert für Einfach oder genau fünf Werte für Erweitert; zulässig sind 1 bis 25.",
                 ForeColor = Muted,
                 AutoSize = true,
                 Anchor = AnchorStyles.Left
             }, 0, 1);
-            defaultShiftNumeric.Minimum = 1;
-            defaultShiftNumeric.Maximum = 25;
-            defaultShiftNumeric.Value = Math.Max(1, Math.Min(25, settings.DefaultShift));
-            defaultShiftNumeric.TextAlign = HorizontalAlignment.Center;
-            defaultShiftNumeric.Dock = DockStyle.Fill;
-            defaultShiftNumeric.Margin = new Padding(8, 5, 0, 5);
-            card.Controls.Add(defaultShiftNumeric, 1, 1);
-            confirmationCheckBox.Text = "Vor jeder Umwandlung eine Bestätigung mit dem gewählten Zählwert anzeigen";
+            defaultShiftSequenceTextBox.Text = ShiftSequence.NormalizeForMainMode(settings.DefaultShiftSequence);
+            defaultShiftSequenceTextBox.TextAlign = HorizontalAlignment.Center;
+            defaultShiftSequenceTextBox.MaxLength = 200;
+            defaultShiftSequenceTextBox.Dock = DockStyle.Fill;
+            defaultShiftSequenceTextBox.Margin = new Padding(8, 5, 0, 5);
+            card.Controls.Add(defaultShiftSequenceTextBox, 1, 1);
+            confirmationCheckBox.Text = "Vor jeder Umwandlung eine Bestätigung mit der gewählten Zählfolge anzeigen";
             confirmationCheckBox.Checked = settings.ConfirmBeforeShift;
             confirmationCheckBox.AutoSize = true;
             confirmationCheckBox.ForeColor = Navy;
@@ -788,9 +937,35 @@ namespace Panda
             askForUpdateCheckBox.Anchor = AnchorStyles.Left;
             askForUpdateCheckBox.Margin = new Padding(22, 3, 3, 3);
             card.SetColumnSpan(askForUpdateCheckBox, 2);
-            card.Controls.Add(askForUpdateCheckBox, 0, 7);
+            card.Controls.Add(askForUpdateCheckBox, 0, 6);
             updateCheckBox.CheckedChanged += delegate { RefreshUpdateFrequencyState(); };
             RefreshUpdateFrequencyState();
+            var designLabel = new Label
+            {
+                Text = "Oberflächendesign",
+                Font = new Font("Segoe UI Semibold", 10F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            card.SetColumnSpan(designLabel, 2);
+            card.Controls.Add(designLabel, 0, 8);
+            interfaceStyleComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            interfaceStyleComboBox.Items.AddRange(new object[] { "Metro (neu)", "Klassisch (Backup)" });
+            interfaceStyleComboBox.SelectedIndex = string.Equals(settings.InterfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            interfaceStyleComboBox.Dock = DockStyle.Fill;
+            interfaceStyleComboBox.Margin = new Padding(0, 4, 0, 4);
+            card.SetColumnSpan(interfaceStyleComboBox, 2);
+            card.Controls.Add(interfaceStyleComboBox, 0, 9);
+            var designNote = new Label
+            {
+                Text = "Das gewählte Design wird nach dem Speichern sofort angewendet.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+            card.SetColumnSpan(designNote, 2);
+            card.Controls.Add(designNote, 0, 10);
             root.Controls.Add(card, 0, 1);
 
             var footer = new TableLayoutPanel
@@ -819,7 +994,6 @@ namespace Panda
             var saveButton = new Button
             {
                 Text = "Speichern",
-                DialogResult = DialogResult.OK,
                 Dock = DockStyle.Fill,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Blue,
@@ -827,6 +1001,7 @@ namespace Panda
                 Margin = new Padding(0)
             };
             saveButton.FlatAppearance.BorderSize = 0;
+            saveButton.Click += delegate { SaveSettings(); };
             footer.Controls.Add(cancelButton, 1, 0);
             footer.Controls.Add(saveButton, 3, 0);
             root.Controls.Add(footer, 0, 2);
@@ -837,6 +1012,34 @@ namespace Panda
         private void RefreshUpdateFrequencyState()
         {
             askForUpdateCheckBox.Enabled = updateCheckBox.Checked;
+        }
+
+        private void SaveSettings()
+        {
+            List<int> values;
+            string errorMessage;
+            if (!ShiftSequence.TryParse(defaultShiftSequenceTextBox.Text, out values, out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Zählfolge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                defaultShiftSequenceTextBox.Focus();
+                defaultShiftSequenceTextBox.SelectAll();
+                return;
+            }
+            if (values.Count != 1 && values.Count != 5)
+            {
+                MessageBox.Show(this,
+                    "Für den einfachen Modus ist genau ein Wert nötig. Für den erweiterten Modus sind genau fünf Werte nötig.",
+                    "Ungültige Anzahl von Zählwerten",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                defaultShiftSequenceTextBox.Focus();
+                defaultShiftSequenceTextBox.SelectAll();
+                return;
+            }
+            DefaultShiftSequence = ShiftSequence.Format(values);
+            defaultShiftSequenceTextBox.Text = DefaultShiftSequence;
+            DialogResult = DialogResult.OK;
+            Close();
         }
     }
 
@@ -2073,12 +2276,12 @@ namespace Panda
         private readonly Color Muted = Color.FromArgb(94, 108, 128);
         private readonly TextBox inputTextBox = new TextBox();
         private readonly TextBox resultTextBox = new TextBox();
-        private readonly NumericUpDown shiftNumeric = new NumericUpDown();
+        private readonly TextBox shiftSequenceTextBox = new TextBox();
         private readonly Button copyButton = new Button();
 
         internal string ResultText { get { return resultTextBox.Text; } }
 
-        public QuickConversionForm(int defaultShift)
+        public QuickConversionForm(string defaultShiftSequence)
         {
             Text = "PANDA – Schnellumwandlung";
             StartPosition = FormStartPosition.CenterParent;
@@ -2089,10 +2292,10 @@ namespace Panda
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
-            BuildLayout(defaultShift);
+            BuildLayout(defaultShiftSequence);
         }
 
-        private void BuildLayout(int defaultShift)
+        private void BuildLayout(string defaultShiftSequence)
         {
             var root = new TableLayoutPanel
             {
@@ -2154,30 +2357,29 @@ namespace Panda
                 Margin = new Padding(0)
             };
             controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
             controls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
             controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
             controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
             controls.Controls.Add(new Label
             {
-                Text = "Zählwert",
+                Text = "Zählfolge",
                 ForeColor = Navy,
                 AutoSize = true,
                 Anchor = AnchorStyles.Left
             }, 0, 0);
-            shiftNumeric.Minimum = 1;
-            shiftNumeric.Maximum = 25;
-            shiftNumeric.Value = Math.Max(1, Math.Min(25, defaultShift));
-            shiftNumeric.TextAlign = HorizontalAlignment.Center;
-            shiftNumeric.Dock = DockStyle.Fill;
-            shiftNumeric.Margin = new Padding(0);
-            controls.Controls.Add(shiftNumeric, 1, 0);
+            shiftSequenceTextBox.Text = ShiftSequence.Normalize(defaultShiftSequence, "1");
+            shiftSequenceTextBox.TextAlign = HorizontalAlignment.Center;
+            shiftSequenceTextBox.MaxLength = 200;
+            shiftSequenceTextBox.Dock = DockStyle.Fill;
+            shiftSequenceTextBox.Margin = new Padding(0);
+            controls.Controls.Add(shiftSequenceTextBox, 1, 0);
             var upButton = CreateActionButton("Hochzählen  +", Color.FromArgb(29, 157, 105));
-            upButton.Click += delegate { ApplyShift((int)shiftNumeric.Value); };
+            upButton.Click += delegate { ApplyConfiguredShift(false); };
             controls.Controls.Add(upButton, 3, 0);
             var downButton = CreateActionButton("Runterzählen  −", Color.FromArgb(230, 91, 84));
-            downButton.Click += delegate { ApplyShift(-(int)shiftNumeric.Value); };
+            downButton.Click += delegate { ApplyConfiguredShift(true); };
             controls.Controls.Add(downButton, 5, 0);
             card.Controls.Add(controls, 0, 2);
 
@@ -2270,9 +2472,24 @@ namespace Panda
             button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
         }
 
-        private void ApplyShift(int amount)
+        private void ApplyConfiguredShift(bool countDown)
         {
-            resultTextBox.Text = LetterShifter.Shift(inputTextBox.Text, amount);
+            List<int> values;
+            string errorMessage;
+            if (!ShiftSequence.TryParse(shiftSequenceTextBox.Text, out values, out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Zählfolge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                shiftSequenceTextBox.Focus();
+                shiftSequenceTextBox.SelectAll();
+                return;
+            }
+            shiftSequenceTextBox.Text = ShiftSequence.Format(values);
+            ApplyShift(values.Select(value => countDown ? -value : value).ToList());
+        }
+
+        private void ApplyShift(IList<int> amounts)
+        {
+            resultTextBox.Text = LetterShifter.Shift(inputTextBox.Text, amounts);
             copyButton.Enabled = resultTextBox.TextLength > 0;
         }
 
@@ -2297,13 +2514,23 @@ namespace Panda
 
         internal void ApplyShiftForTest(int amount)
         {
-            ApplyShift(amount);
+            ApplyShift(new[] { amount });
+        }
+
+        internal void ApplySequenceForTest(string sequence, bool countDown)
+        {
+            shiftSequenceTextBox.Text = sequence;
+            List<int> values;
+            string errorMessage;
+            if (!ShiftSequence.TryParse(sequence, out values, out errorMessage))
+                throw new InvalidOperationException(errorMessage);
+            ApplyShift(values.Select(value => countDown ? -value : value).ToList());
         }
 
         internal void LoadPreviewData()
         {
             inputTextBox.Text = "Anna Meyer\r\nBüro 12 – Raum Nord";
-            ApplyShift((int)shiftNumeric.Value);
+            ApplyConfiguredShift(false);
         }
     }
 
@@ -2711,6 +2938,86 @@ namespace Panda
         }
     }
 
+    internal sealed class ShiftModeSelector : Control
+    {
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Border = Color.FromArgb(206, 216, 230);
+        private bool advanced;
+
+        internal event EventHandler SimpleSelected;
+        internal event EventHandler AdvancedSelected;
+
+        internal bool Advanced
+        {
+            get { return advanced; }
+            set
+            {
+                if (advanced == value)
+                    return;
+                advanced = value;
+                Invalidate();
+            }
+        }
+
+        internal ShiftModeSelector()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+            Cursor = Cursors.Hand;
+            TabStop = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs eventArgs)
+        {
+            base.OnPaint(eventArgs);
+            int firstWidth = ClientSize.Width / 2;
+            var simpleBounds = new Rectangle(0, 0, firstWidth, ClientSize.Height);
+            var advancedBounds = new Rectangle(firstWidth, 0, ClientSize.Width - firstWidth, ClientSize.Height);
+            DrawSegment(eventArgs.Graphics, simpleBounds, "Einfach", !advanced);
+            DrawSegment(eventArgs.Graphics, advancedBounds, "Erweitert", advanced);
+            if (Focused)
+                ControlPaint.DrawFocusRectangle(eventArgs.Graphics, advanced ? advancedBounds : simpleBounds);
+        }
+
+        private void DrawSegment(Graphics graphics, Rectangle bounds, string text, bool selected)
+        {
+            using (var brush = new SolidBrush(selected ? Blue : Background))
+                graphics.FillRectangle(brush, bounds);
+            ControlPaint.DrawBorder(graphics, bounds, selected ? Blue : Border, ButtonBorderStyle.Solid);
+            TextRenderer.DrawText(graphics, text, Font, bounds, selected ? Color.White : Navy,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs eventArgs)
+        {
+            base.OnMouseUp(eventArgs);
+            SelectMode(eventArgs.X >= ClientSize.Width / 2);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs eventArgs)
+        {
+            base.OnKeyDown(eventArgs);
+            if (eventArgs.KeyCode == Keys.Left)
+            {
+                SelectMode(false);
+                eventArgs.Handled = true;
+            }
+            else if (eventArgs.KeyCode == Keys.Right)
+            {
+                SelectMode(true);
+                eventArgs.Handled = true;
+            }
+        }
+
+        private void SelectMode(bool selectAdvanced)
+        {
+            EventHandler handler = selectAdvanced ? AdvancedSelected : SimpleSelected;
+            if (handler != null)
+                handler(this, EventArgs.Empty);
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private readonly Color Navy = Color.FromArgb(24, 38, 58);
@@ -2722,7 +3029,17 @@ namespace Panda
         private readonly DataGridView originalGrid = new DataGridView();
         private readonly DataGridView resultGrid = new DataGridView();
         private readonly ComboBox scopeComboBox = new ComboBox();
-        private readonly NumericUpDown stepNumeric = new NumericUpDown();
+        private readonly NumericUpDown simpleShiftNumeric = new NumericUpDown();
+        private readonly NumericUpDown[] advancedShiftNumerics =
+        {
+            new NumericUpDown(), new NumericUpDown(), new NumericUpDown(), new NumericUpDown(), new NumericUpDown()
+        };
+        private readonly TableLayoutPanel shiftValueHost = new TableLayoutPanel();
+        private readonly TableLayoutPanel simpleShiftPanel = new TableLayoutPanel();
+        private readonly TableLayoutPanel advancedShiftPanel = new TableLayoutPanel();
+        private readonly ShiftModeSelector modeSelectorHost = new ShiftModeSelector();
+        private readonly Label shiftValuesCaptionLabel = new Label();
+        private readonly Label sequenceRestartHint = new Label();
         private readonly Label statusLabel = new Label();
         private readonly Label fileLabel = new Label();
         private readonly Button exportButton = new Button();
@@ -2741,16 +3058,27 @@ namespace Panda
         private AppSettings appSettings = AppSettings.Load();
         private readonly List<SelectionTemplate> selectionTemplates = SelectionTemplateStore.Load();
         private readonly bool automaticUpdateChecksEnabled;
+        private string activeInterfaceStyle;
+        private Control layoutRoot;
+        private bool advancedShiftMode;
         private bool updateCheckInProgress;
 
         public MainForm()
-            : this(true)
+            : this(true, null)
         {
         }
 
         internal MainForm(bool automaticUpdateChecksEnabled)
+            : this(automaticUpdateChecksEnabled, null)
+        {
+        }
+
+        internal MainForm(bool automaticUpdateChecksEnabled, string interfaceStyleOverride)
         {
             this.automaticUpdateChecksEnabled = automaticUpdateChecksEnabled;
+            if (!string.IsNullOrEmpty(interfaceStyleOverride))
+                appSettings.InterfaceStyle = string.Equals(interfaceStyleOverride, "Classic", StringComparison.OrdinalIgnoreCase) ? "Classic" : "Metro";
+            activeInterfaceStyle = string.Equals(appSettings.InterfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase) ? "Classic" : "Metro";
             Text = "PANDA – Pseudonymisierung alphanumerischer Nutzdaten";
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1180, 680);
@@ -2759,6 +3087,8 @@ namespace Panda
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
 
+            InitializeSharedControls();
+            WireSharedControlEvents();
             BuildLayout();
             ConfigureGrid(originalGrid, true);
             ConfigureGrid(resultGrid, false);
@@ -2769,6 +3099,331 @@ namespace Panda
 
         private void BuildLayout()
         {
+            string previousFileText = fileLabel.Text;
+            string previousStatusText = statusLabel.Text;
+            Color previousStatusColor = statusLabel.ForeColor;
+            string previousUpdateText = updateButton.Text;
+            Control previousRoot = layoutRoot;
+
+            SuspendLayout();
+            if (string.Equals(activeInterfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase))
+                BuildClassicLayout();
+            else
+                BuildMetroLayout();
+
+            if (previousRoot != null && previousRoot != layoutRoot)
+            {
+                Controls.Remove(previousRoot);
+                previousRoot.Dispose();
+            }
+            if (!string.IsNullOrEmpty(previousFileText))
+                fileLabel.Text = previousFileText;
+            if (!string.IsNullOrEmpty(previousStatusText))
+            {
+                statusLabel.Text = previousStatusText;
+                statusLabel.ForeColor = previousStatusColor;
+            }
+            if (!string.IsNullOrEmpty(previousUpdateText))
+                updateButton.Text = previousUpdateText;
+            filterButton.Text = activeRowFilter != null && !activeRowFilter.IsEmpty
+                ? "Filter aktiv"
+                : (IsClassicDesign ? "Filter" : "Zeilen filtern");
+            RefreshShiftModeUi();
+            SetDocumentControlsEnabled(document != null);
+            ResumeLayout(true);
+        }
+
+        private void InitializeSharedControls()
+        {
+            scopeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            scopeComboBox.Items.AddRange(new object[] { "Markierte Zellen", "Aktuelle Zelle", "Alle Einträge" });
+            scopeComboBox.SelectedIndex = 0;
+
+            ConfigureShiftNumeric(simpleShiftNumeric);
+            simpleShiftNumeric.Width = 88;
+            foreach (NumericUpDown numeric in advancedShiftNumerics)
+                ConfigureShiftNumeric(numeric);
+
+            simpleShiftPanel.Dock = DockStyle.Fill;
+            simpleShiftPanel.ColumnCount = 2;
+            simpleShiftPanel.RowCount = 1;
+            simpleShiftPanel.Margin = new Padding(0);
+            simpleShiftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            simpleShiftPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            simpleShiftPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            simpleShiftPanel.Controls.Add(simpleShiftNumeric, 0, 0);
+
+            advancedShiftPanel.Dock = DockStyle.Fill;
+            advancedShiftPanel.ColumnCount = 10;
+            advancedShiftPanel.RowCount = 1;
+            advancedShiftPanel.Margin = new Padding(0);
+            advancedShiftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            for (int index = 0; index < 5; index++)
+            {
+                int column = index * 2;
+                advancedShiftPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
+                advancedShiftPanel.Controls.Add(advancedShiftNumerics[index], column, 0);
+                if (index < 4)
+                {
+                    advancedShiftPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
+                    advancedShiftPanel.Controls.Add(new Panel
+                    {
+                        BackColor = Color.FromArgb(150, 160, 174),
+                        Size = new Size(8, 2),
+                        Anchor = AnchorStyles.None,
+                        Margin = new Padding(0)
+                    }, column + 1, 0);
+                }
+            }
+            advancedShiftPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            shiftValueHost.Dock = DockStyle.Fill;
+            shiftValueHost.ColumnCount = 1;
+            shiftValueHost.RowCount = 1;
+            shiftValueHost.Margin = new Padding(0);
+            shiftValueHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            shiftValueHost.Controls.Add(simpleShiftPanel, 0, 0);
+            shiftValueHost.Controls.Add(advancedShiftPanel, 0, 0);
+
+            modeSelectorHost.Dock = DockStyle.Fill;
+            modeSelectorHost.Margin = new Padding(0);
+
+            shiftValuesCaptionLabel.ForeColor = Muted;
+            shiftValuesCaptionLabel.Font = new Font("Segoe UI Semibold", 7.5F);
+            shiftValuesCaptionLabel.Dock = DockStyle.Fill;
+            shiftValuesCaptionLabel.TextAlign = ContentAlignment.MiddleLeft;
+
+            sequenceRestartHint.ForeColor = Muted;
+            sequenceRestartHint.Font = new Font("Segoe UI", 8F);
+            sequenceRestartHint.Dock = DockStyle.Fill;
+            sequenceRestartHint.TextAlign = ContentAlignment.MiddleCenter;
+            sequenceRestartHint.AutoEllipsis = true;
+            sequenceRestartHint.Margin = new Padding(8, 0, 0, 0);
+
+            LoadShiftConfiguration(appSettings.DefaultShiftSequence);
+        }
+
+        private void ConfigureShiftNumeric(NumericUpDown numeric)
+        {
+            numeric.Minimum = 1;
+            numeric.Maximum = 25;
+            numeric.Value = 1;
+            numeric.TextAlign = HorizontalAlignment.Center;
+            numeric.Dock = DockStyle.None;
+            numeric.Anchor = AnchorStyles.None;
+            numeric.Width = 54;
+            numeric.Margin = new Padding(0);
+            numeric.Font = new Font("Segoe UI Semibold", 9F);
+        }
+
+        private void WireSharedControlEvents()
+        {
+            clearButton.Click += delegate { ClearCurrentCsv(); };
+            filterButton.Click += delegate { OpenRowFilter(); };
+            quickConversionButton.Click += delegate { OpenQuickConversion(); };
+            templatesButton.Click += delegate { OpenSelectionTemplates(); };
+            settingsButton.Click += delegate { OpenSettings(); };
+            updateButton.Click += delegate { CheckForUpdates(true); };
+            resetButton.Click += delegate { ResetResults(); };
+            exportButton.Click += delegate { ExportCsv(); };
+            modeSelectorHost.SimpleSelected += delegate { SetAdvancedShiftMode(false); };
+            modeSelectorHost.AdvancedSelected += delegate { SetAdvancedShiftMode(true); };
+        }
+
+        private void BuildMetroLayout()
+        {
+            var shell = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.FromArgb(241, 244, 248),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            Controls.Add(shell);
+            layoutRoot = shell;
+
+            var sidebar = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(25, 37, 54), Margin = new Padding(0) };
+            sidebar.Controls.Add(new Label
+            {
+                Text = "PANDA",
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI Semibold", 22F),
+                AutoSize = true,
+                Location = new Point(22, 24)
+            });
+            sidebar.Controls.Add(new Label
+            {
+                Text = "PSEUDONYMISIERUNG",
+                ForeColor = Color.FromArgb(139, 158, 184),
+                Font = new Font("Segoe UI Semibold", 8F),
+                AutoSize = true,
+                Location = new Point(24, 68)
+            });
+            var accent = new Panel { BackColor = Blue, Location = new Point(0, 20), Size = new Size(5, 62) };
+            sidebar.Controls.Add(accent);
+
+            var navigation = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Location = new Point(18, 116),
+                Size = new Size(184, 500),
+                BackColor = sidebar.BackColor,
+                Margin = new Padding(0)
+            };
+            var importButton = CreateMetroNavigationButton("CSV importieren", true);
+            importButton.Click += delegate { ImportCsv(); };
+            navigation.Controls.Add(importButton);
+            ConfigureMetroNavigationButton(clearButton, "Aktuelle CSV leeren");
+            navigation.Controls.Add(clearButton);
+            ConfigureMetroNavigationButton(filterButton, "Zeilen filtern");
+            navigation.Controls.Add(filterButton);
+            ConfigureMetroNavigationButton(quickConversionButton, "Schnellumwandlung");
+            navigation.Controls.Add(quickConversionButton);
+            ConfigureMetroNavigationButton(templatesButton, "Auswahlvorlagen");
+            navigation.Controls.Add(templatesButton);
+            ConfigureMetroNavigationButton(settingsButton, "Einstellungen");
+            navigation.Controls.Add(settingsButton);
+            sidebar.Controls.Add(navigation);
+            var designFooter = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 46,
+                BackColor = sidebar.BackColor
+            };
+            designFooter.Controls.Add(new Label
+            {
+                Text = "DESIGN  •  METRO",
+                ForeColor = Color.FromArgb(115, 137, 165),
+                Font = new Font("Segoe UI Semibold", 8F),
+                AutoSize = true,
+                Location = new Point(24, 12)
+            });
+            sidebar.Controls.Add(designFooter);
+            shell.Controls.Add(sidebar, 0, 0);
+
+            var workspace = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(22, 18, 22, 14),
+                BackColor = Color.FromArgb(241, 244, 248),
+                Margin = new Padding(0)
+            };
+            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            workspace.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            shell.Controls.Add(workspace, 1, 0);
+
+            var header = new Panel { Dock = DockStyle.Fill, BackColor = workspace.BackColor };
+            header.Controls.Add(new Label
+            {
+                Text = "Daten umwandeln",
+                ForeColor = Navy,
+                Font = new Font("Segoe UI Semibold", 20F),
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            fileLabel.Text = "Noch keine CSV geladen";
+            fileLabel.ForeColor = Muted;
+            fileLabel.AutoEllipsis = true;
+            fileLabel.Dock = DockStyle.None;
+            fileLabel.Size = new Size(700, 22);
+            fileLabel.Location = new Point(2, 43);
+            header.Controls.Add(fileLabel);
+            updateButton.Text = "Updates prüfen";
+            StyleSecondaryButton(updateButton);
+            updateButton.Dock = DockStyle.None;
+            updateButton.Size = new Size(158, 36);
+            updateButton.Location = new Point(0, 4);
+            updateButton.Margin = new Padding(0);
+            var updateHost = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = 158,
+                BackColor = workspace.BackColor
+            };
+            updateHost.Controls.Add(updateButton);
+            header.Controls.Add(updateHost);
+            workspace.Controls.Add(header, 0, 0);
+
+            var commandBar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 5,
+                RowCount = 2,
+                BackColor = Color.White,
+                Padding = new Padding(12, 10, 12, 10),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            for (int column = 0; column < 4; column++)
+                commandBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+            commandBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            commandBar.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+            commandBar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            commandBar.Controls.Add(CreateMetroInputPanel("BEREICH", scopeComboBox), 0, 0);
+            commandBar.Controls.Add(CreateMetroInputPanel("VERSCHLÜSSELUNG", modeSelectorHost), 1, 0);
+            Control metroValuesPanel = CreateShiftValuesInputPanel();
+            commandBar.Controls.Add(metroValuesPanel, 2, 0);
+            commandBar.SetColumnSpan(metroValuesPanel, 2);
+            var upButton = CreateButton("Hochzählen  +", Color.FromArgb(20, 153, 102), Color.White);
+            upButton.Click += delegate { ApplyConfiguredShift(false); };
+            commandBar.Controls.Add(upButton, 0, 1);
+            var downButton = CreateButton("Runterzählen  −", Color.FromArgb(221, 78, 73), Color.White);
+            downButton.Click += delegate { ApplyConfiguredShift(true); };
+            commandBar.Controls.Add(downButton, 1, 1);
+            resetButton.Text = "Zurücksetzen";
+            StyleSecondaryButton(resetButton);
+            commandBar.Controls.Add(resetButton, 2, 1);
+            exportButton.Text = "CSV exportieren";
+            StyleSecondaryButton(exportButton);
+            commandBar.Controls.Add(exportButton, 3, 1);
+            if (sequenceRestartHint.Parent != null)
+                sequenceRestartHint.Parent.Controls.Remove(sequenceRestartHint);
+            commandBar.SetColumnSpan(sequenceRestartHint, 1);
+            commandBar.Controls.Add(sequenceRestartHint, 4, 1);
+            workspace.Controls.Add(commandBar, 0, 1);
+
+            var grids = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 2,
+                BackColor = workspace.BackColor,
+                Margin = new Padding(0)
+            };
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            grids.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            grids.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            grids.Controls.Add(CreateGridHeader("ORIGINAL", "Importierte CSV-Werte", false), 0, 0);
+            grids.Controls.Add(CreateGridHeader("ERGEBNIS", "Veränderte Werte", true), 1, 0);
+            originalGrid.Margin = new Padding(0, 0, 7, 0);
+            resultGrid.Margin = new Padding(7, 0, 0, 0);
+            grids.Controls.Add(originalGrid, 0, 1);
+            grids.Controls.Add(resultGrid, 1, 1);
+            workspace.Controls.Add(grids, 0, 2);
+
+            var statusPanel = new Panel { Dock = DockStyle.Fill, BackColor = workspace.BackColor };
+            statusLabel.Text = "Bereit – bitte eine CSV-Datei importieren.";
+            statusLabel.ForeColor = Muted;
+            statusLabel.AutoSize = false;
+            statusLabel.AutoEllipsis = true;
+            statusLabel.Dock = DockStyle.Fill;
+            statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+            statusPanel.Controls.Add(statusLabel);
+            workspace.Controls.Add(statusPanel, 0, 3);
+        }
+
+        private void BuildClassicLayout()
+        {
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -2778,10 +3433,11 @@ namespace Panda
                 BackColor = Background
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 98));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 164));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             Controls.Add(root);
+            layoutRoot = root;
 
             var header = new Panel { Dock = DockStyle.Fill, BackColor = Background };
             var title = new Label
@@ -2810,14 +3466,12 @@ namespace Panda
             quickConversionButton.Dock = DockStyle.None;
             quickConversionButton.Size = new Size(176, 34);
             quickConversionButton.Location = new Point(0, 5);
-            quickConversionButton.Click += delegate { OpenQuickConversion(); };
             headerActions.Controls.Add(quickConversionButton);
             updateButton.Text = "Updates prüfen";
             StyleSecondaryButton(updateButton);
             updateButton.Dock = DockStyle.None;
             updateButton.Size = new Size(176, 34);
             updateButton.Location = new Point(190, 5);
-            updateButton.Click += delegate { CheckForUpdates(true); };
             headerActions.Controls.Add(updateButton);
             header.Controls.Add(headerActions);
             header.Controls.Add(title);
@@ -2827,90 +3481,68 @@ namespace Panda
             var toolbar = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 9,
-                RowCount = 2,
+                ColumnCount = 7,
+                RowCount = 3,
                 Padding = new Padding(12, 10, 12, 8),
                 BackColor = Color.White,
                 Margin = new Padding(0, 0, 0, 12)
             };
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 148));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 122));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            float[] classicColumnWeights = { 15F, 15F, 22F, 16F, 16F, 16F };
+            foreach (float weight in classicColumnWeights)
+                toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, weight));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             root.Controls.Add(toolbar, 0, 1);
 
             var importButton = CreateButton("Importieren", Blue, Color.White);
             importButton.Click += delegate { ImportCsv(); };
+            importButton.Margin = new Padding(4, 10, 4, 10);
             toolbar.Controls.Add(importButton, 0, 0);
-
-            scopeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            scopeComboBox.Items.AddRange(new object[] { "Markierte Zellen", "Aktuelle Zelle", "Alle Einträge" });
-            scopeComboBox.SelectedIndex = 0;
-            scopeComboBox.Dock = DockStyle.Fill;
-            scopeComboBox.Margin = new Padding(7, 3, 7, 3);
-            toolbar.Controls.Add(scopeComboBox, 1, 0);
-
-            stepNumeric.Minimum = 1;
-            stepNumeric.Maximum = 25;
-            stepNumeric.Value = Math.Max(1, Math.Min(25, appSettings.DefaultShift));
-            stepNumeric.Dock = DockStyle.Fill;
-            stepNumeric.TextAlign = HorizontalAlignment.Center;
-            stepNumeric.Margin = new Padding(7, 3, 7, 3);
-            toolbar.Controls.Add(stepNumeric, 2, 0);
+            toolbar.Controls.Add(CreateMetroInputPanel("BEREICH", scopeComboBox), 1, 0);
+            toolbar.Controls.Add(CreateMetroInputPanel("VERSCHLÜSSELUNG", modeSelectorHost), 2, 0);
+            Control classicValuesPanel = CreateShiftValuesInputPanel();
+            toolbar.Controls.Add(classicValuesPanel, 3, 0);
+            toolbar.SetColumnSpan(classicValuesPanel, 3);
 
             var upButton = CreateButton("Hochzählen  +", Color.FromArgb(29, 157, 105), Color.White);
-            upButton.Click += delegate { ApplyShift((int)stepNumeric.Value); };
-            toolbar.Controls.Add(upButton, 3, 0);
-
+            upButton.Click += delegate { ApplyConfiguredShift(false); };
+            toolbar.Controls.Add(upButton, 0, 1);
             var downButton = CreateButton("Runterzählen  −", Color.FromArgb(230, 91, 84), Color.White);
-            downButton.Click += delegate { ApplyShift(-(int)stepNumeric.Value); };
-            toolbar.Controls.Add(downButton, 4, 0);
-
+            downButton.Click += delegate { ApplyConfiguredShift(true); };
+            toolbar.Controls.Add(downButton, 1, 1);
             resetButton.Text = "Zurücksetzen";
             StyleSecondaryButton(resetButton);
-            resetButton.Click += delegate { ResetResults(); };
-            toolbar.Controls.Add(resetButton, 5, 0);
-
+            toolbar.Controls.Add(resetButton, 2, 1);
             exportButton.Text = "CSV exportieren";
             StyleSecondaryButton(exportButton);
-            exportButton.Click += delegate { ExportCsv(); };
-            toolbar.Controls.Add(exportButton, 6, 0);
-
+            toolbar.Controls.Add(exportButton, 3, 1);
             settingsButton.Text = "Einstellungen";
             StyleSecondaryButton(settingsButton);
-            settingsButton.Click += delegate { OpenSettings(); };
-            toolbar.Controls.Add(settingsButton, 7, 0);
-
+            toolbar.Controls.Add(settingsButton, 4, 1);
             templatesButton.Text = "Vorlagen";
             StyleSecondaryButton(templatesButton);
-            templatesButton.Click += delegate { OpenSelectionTemplates(); };
-            toolbar.Controls.Add(templatesButton, 8, 0);
+            toolbar.Controls.Add(templatesButton, 5, 1);
+            if (sequenceRestartHint.Parent != null)
+                sequenceRestartHint.Parent.Controls.Remove(sequenceRestartHint);
+            toolbar.SetColumnSpan(sequenceRestartHint, 1);
+            toolbar.Controls.Add(sequenceRestartHint, 6, 1);
 
             clearButton.Text = "Leeren";
             StyleSecondaryButton(clearButton);
-            clearButton.Click += delegate { ClearCurrentCsv(); };
-            toolbar.Controls.Add(clearButton, 0, 1);
-
+            toolbar.Controls.Add(clearButton, 0, 2);
             filterButton.Text = "Filter";
             StyleSecondaryButton(filterButton);
-            filterButton.Click += delegate { OpenRowFilter(); };
-            toolbar.Controls.Add(filterButton, 1, 1);
-
+            toolbar.Controls.Add(filterButton, 1, 2);
             fileLabel.Text = "Noch keine CSV geladen";
             fileLabel.ForeColor = Muted;
             fileLabel.AutoEllipsis = true;
             fileLabel.Dock = DockStyle.Fill;
             fileLabel.TextAlign = ContentAlignment.MiddleLeft;
-            toolbar.SetColumnSpan(fileLabel, 4);
-            toolbar.Controls.Add(fileLabel, 2, 1);
-
+            fileLabel.Margin = new Padding(8, 0, 8, 0);
+            toolbar.Controls.Add(fileLabel, 2, 2);
+            toolbar.SetColumnSpan(fileLabel, 3);
             var hint = new Label
             {
                 Text = "Tipp: Spaltenkopf anklicken; mit Strg weitere Spalten ergänzen.",
@@ -2919,8 +3551,8 @@ namespace Panda
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleRight
             };
-            toolbar.SetColumnSpan(hint, 3);
-            toolbar.Controls.Add(hint, 6, 1);
+            toolbar.Controls.Add(hint, 5, 2);
+            toolbar.SetColumnSpan(hint, 2);
 
             var grids = new TableLayoutPanel
             {
@@ -2948,6 +3580,7 @@ namespace Panda
             statusLabel.Text = "Bereit – bitte eine CSV-Datei importieren.";
             statusLabel.ForeColor = Muted;
             statusLabel.AutoSize = true;
+            statusLabel.Dock = DockStyle.None;
             statusLabel.Location = new Point(2, 12);
             statusPanel.Controls.Add(statusLabel);
             root.Controls.Add(statusPanel, 0, 3);
@@ -2983,7 +3616,11 @@ namespace Panda
                 BackColor = background,
                 ForeColor = foreground,
                 Cursor = Cursors.Hand,
-                Margin = new Padding(4, 2, 4, 2)
+                Margin = new Padding(4, 2, 4, 2),
+                Padding = new Padding(0),
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseCompatibleTextRendering = false,
+                UseVisualStyleBackColor = false
             };
             button.FlatAppearance.BorderSize = 0;
             return button;
@@ -2997,7 +3634,143 @@ namespace Panda
             button.ForeColor = Navy;
             button.Cursor = Cursors.Hand;
             button.Margin = new Padding(4, 2, 4, 2);
+            button.Padding = new Padding(0);
+            button.TextAlign = ContentAlignment.MiddleCenter;
+            button.UseCompatibleTextRendering = false;
+            button.UseVisualStyleBackColor = false;
             button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private Button CreateMetroNavigationButton(string text, bool accent)
+        {
+            var button = new Button();
+            ConfigureMetroNavigationButton(button, text);
+            if (accent)
+            {
+                button.BackColor = Blue;
+                button.FlatAppearance.BorderSize = 0;
+            }
+            return button;
+        }
+
+        private void ConfigureMetroNavigationButton(Button button, string text)
+        {
+            button.Text = text;
+            button.Size = new Size(184, 44);
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.FromArgb(34, 49, 69);
+            button.ForeColor = Color.White;
+            button.Cursor = Cursors.Hand;
+            button.TextAlign = ContentAlignment.MiddleLeft;
+            button.Padding = new Padding(14, 0, 0, 0);
+            button.Margin = new Padding(0, 0, 0, 8);
+            button.UseCompatibleTextRendering = false;
+            button.UseVisualStyleBackColor = false;
+            button.FlatAppearance.BorderColor = Color.FromArgb(56, 74, 98);
+        }
+
+        private Control CreateMetroInputPanel(string caption, Control control)
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = new Padding(4, 0, 4, 0)
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            panel.Controls.Add(new Label
+            {
+                Text = caption,
+                ForeColor = Muted,
+                Font = new Font("Segoe UI Semibold", 7.5F),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 0);
+            control.Dock = DockStyle.Fill;
+            control.Margin = new Padding(0);
+            panel.Controls.Add(control, 0, 1);
+            return panel;
+        }
+
+        private Control CreateShiftValuesInputPanel()
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = new Padding(4, 0, 4, 0)
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            if (shiftValuesCaptionLabel.Parent != null)
+                shiftValuesCaptionLabel.Parent.Controls.Remove(shiftValuesCaptionLabel);
+            panel.Controls.Add(shiftValuesCaptionLabel, 0, 0);
+            shiftValueHost.Dock = DockStyle.Fill;
+            shiftValueHost.Margin = new Padding(0);
+            panel.Controls.Add(shiftValueHost, 0, 1);
+            return panel;
+        }
+
+        private void LoadShiftConfiguration(string sequenceText)
+        {
+            string normalized = ShiftSequence.NormalizeForMainMode(sequenceText);
+            List<int> values;
+            string errorMessage;
+            ShiftSequence.TryParse(normalized, out values, out errorMessage);
+            advancedShiftMode = values.Count > 1;
+            List<int> advancedValues = ShiftSequence.ToFiveValues(values);
+            simpleShiftNumeric.Value = advancedValues[0];
+            for (int index = 0; index < advancedShiftNumerics.Length; index++)
+                advancedShiftNumerics[index].Value = advancedValues[index];
+            appSettings.DefaultShiftSequence = normalized;
+            RefreshShiftModeUi();
+        }
+
+        private void SetAdvancedShiftMode(bool advanced)
+        {
+            if (advancedShiftMode == advanced)
+                return;
+            if (advanced)
+                advancedShiftNumerics[0].Value = simpleShiftNumeric.Value;
+            else
+                simpleShiftNumeric.Value = advancedShiftNumerics[0].Value;
+            advancedShiftMode = advanced;
+            RefreshShiftModeUi();
+            statusLabel.Text = advanced
+                ? "Erweiterte Verschlüsselung aktiv: Die Chiffre verwendet fünf Werte nacheinander."
+                : "Einfache Verschlüsselung aktiv: ein Zählwert wird durchgehend verwendet.";
+            statusLabel.ForeColor = Muted;
+        }
+
+        private void RefreshShiftModeUi()
+        {
+            simpleShiftPanel.Visible = !advancedShiftMode;
+            advancedShiftPanel.Visible = advancedShiftMode;
+            if (advancedShiftMode)
+                advancedShiftPanel.BringToFront();
+            else
+                simpleShiftPanel.BringToFront();
+            modeSelectorHost.Advanced = advancedShiftMode;
+            shiftValuesCaptionLabel.Text = advancedShiftMode ? "CHIFFRE" : "ZÄHLWERT";
+            sequenceRestartHint.Text = advancedShiftMode
+                ? "Zählfolge beginnt je Wert neu"
+                : "Ein Zählwert gilt für alle Buchstaben";
+            sequenceRestartHint.Visible = true;
+        }
+
+        private List<int> GetConfiguredShiftValues()
+        {
+            if (!advancedShiftMode)
+                return new List<int> { (int)simpleShiftNumeric.Value };
+            return advancedShiftNumerics.Select(numeric => (int)numeric.Value).ToList();
+        }
+
+        private bool IsClassicDesign
+        {
+            get { return string.Equals(activeInterfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase); }
         }
 
         private void OpenSettings()
@@ -3007,15 +3780,21 @@ namespace Panda
                 if (dialog.ShowDialog(this) != DialogResult.OK)
                     return;
 
-                appSettings.DefaultShift = dialog.DefaultShift;
+                string previousInterfaceStyle = appSettings.InterfaceStyle;
+                appSettings.DefaultShiftSequence = dialog.DefaultShiftSequence;
+                appSettings.InterfaceStyle = dialog.InterfaceStyle;
                 appSettings.ConfirmBeforeShift = dialog.ConfirmBeforeShift;
                 appSettings.CheckForUpdates = dialog.CheckForUpdates;
                 appSettings.AskForUpdateCheckOnStart = dialog.AskForUpdateCheckOnStart;
                 try
                 {
                     appSettings.Save();
-                    stepNumeric.Value = appSettings.DefaultShift;
-                    statusLabel.Text = "Einstellungen gespeichert. Standard-Zählwert: " + appSettings.DefaultShift + ".";
+                    bool designChanged = !string.Equals(previousInterfaceStyle, appSettings.InterfaceStyle, StringComparison.OrdinalIgnoreCase);
+                    LoadShiftConfiguration(appSettings.DefaultShiftSequence);
+                    if (designChanged)
+                        ApplyInterfaceStyle(appSettings.InterfaceStyle);
+                    statusLabel.Text = "Einstellungen gespeichert. Standard-Zählfolge: " + appSettings.DefaultShiftSequence + "."
+                        + (designChanged ? " Das Design wurde sofort gewechselt." : string.Empty);
                     statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
                 }
                 catch (Exception exception)
@@ -3027,8 +3806,15 @@ namespace Panda
 
         private void OpenQuickConversion()
         {
-            using (var dialog = new QuickConversionForm(appSettings.DefaultShift))
+            using (var dialog = new QuickConversionForm(ShiftSequence.Format(GetConfiguredShiftValues())))
                 dialog.ShowDialog(this);
+        }
+
+        private void ApplyInterfaceStyle(string interfaceStyle)
+        {
+            activeInterfaceStyle = string.Equals(interfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase) ? "Classic" : "Metro";
+            appSettings.InterfaceStyle = activeInterfaceStyle;
+            BuildLayout();
         }
 
         private void InitializeUpdateCheck()
@@ -3348,7 +4134,10 @@ namespace Panda
         private void OpenSelectionTemplates()
         {
             if (document == null)
+            {
+                ShowCsvRequiredMessage("Auswahlvorlagen");
                 return;
+            }
             List<int> selectedColumns = originalGrid.SelectedCells
                 .Cast<DataGridViewCell>()
                 .Select(cell => cell.ColumnIndex)
@@ -3410,7 +4199,7 @@ namespace Panda
                     }
                     importedPath = dialog.FileName;
                     activeRowFilter = null;
-                    filterButton.Text = "Filter";
+                    filterButton.Text = IsClassicDesign ? "Filter" : "Zeilen filtern";
                     PopulateGrids();
                     baseFileLabelText = Path.GetFileName(dialog.FileName) + "  •  " + document.Rows.Count + " Zeilen  •  " + document.Headers.Count + " importierte Spalten  •  " + DelimiterName(document.Delimiter);
                     UpdateFileLabel(0);
@@ -3430,7 +4219,10 @@ namespace Panda
         private void ClearCurrentCsv()
         {
             if (document == null)
+            {
+                ShowCsvRequiredMessage("Aktuelle CSV leeren");
                 return;
+            }
             DialogResult confirmation = MessageBox.Show(this,
                 "Die aktuelle CSV wird aus PANDA entfernt. Nicht exportierte Änderungen gehen verloren.\r\n\r\n"
                 + "Die ursprüngliche Datei auf dem Datenträger bleibt unverändert. Möchtest du fortfahren?",
@@ -3453,7 +4245,7 @@ namespace Panda
             importedPath = null;
             baseFileLabelText = string.Empty;
             activeRowFilter = null;
-            filterButton.Text = "Filter";
+            filterButton.Text = IsClassicDesign ? "Filter" : "Zeilen filtern";
             fileLabel.Text = "Noch keine CSV geladen";
             statusLabel.Text = "Bereit – bitte eine CSV-Datei importieren.";
             statusLabel.ForeColor = Muted;
@@ -3464,7 +4256,10 @@ namespace Panda
         private void OpenRowFilter()
         {
             if (document == null)
+            {
+                ShowCsvRequiredMessage("Zeilen filtern");
                 return;
+            }
             var rows = document.Rows.Select(row => (IList<string>)row).ToList();
             using (var dialog = new RowFilterForm(document.Headers, rows, activeRowFilter))
             {
@@ -3494,7 +4289,7 @@ namespace Panda
                 resultGrid.Rows[rowIndex].Visible = visible;
             }
             bool filterActive = activeRowFilter != null && !activeRowFilter.IsEmpty;
-            filterButton.Text = filterActive ? "Filter aktiv" : "Filter";
+            filterButton.Text = filterActive ? "Filter aktiv" : (IsClassicDesign ? "Filter" : "Zeilen filtern");
             UpdateFileLabel(hiddenRows.Count);
             if (filterActive)
             {
@@ -3561,7 +4356,12 @@ namespace Panda
             resultGrid.ResumeLayout();
         }
 
-        private void ApplyShift(int amount)
+        private void ApplyConfiguredShift(bool countDown)
+        {
+            ApplyShift(GetConfiguredShiftValues(), countDown);
+        }
+
+        private void ApplyShift(IList<int> sequence, bool countDown)
         {
             if (document == null)
                 return;
@@ -3575,7 +4375,7 @@ namespace Panda
 
             if (appSettings.ConfirmBeforeShift)
             {
-                string message = BuildConfirmationMessage(amount, cells.Count, scopeComboBox.SelectedIndex == 2);
+                string message = BuildConfirmationMessage(sequence, countDown, cells.Count, scopeComboBox.SelectedIndex == 2);
                 DialogResult confirmation = MessageBox.Show(this, message, "Umwandlung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
                 if (confirmation != DialogResult.Yes)
                 {
@@ -3586,26 +4386,37 @@ namespace Panda
             }
 
             int changed = 0;
+            List<int> signedSequence = sequence.Select(value => countDown ? -Math.Abs(value) : Math.Abs(value)).ToList();
             foreach (var coordinate in cells)
             {
                 var cell = resultGrid.Rows[coordinate.Item1].Cells[coordinate.Item2];
                 string before = Convert.ToString(cell.Value) ?? string.Empty;
-                string after = LetterShifter.Shift(before, amount);
+                string after = LetterShifter.Shift(before, signedSequence);
                 cell.Value = after;
                 if (!string.Equals(before, after, StringComparison.Ordinal))
                     changed++;
             }
 
-            statusLabel.Text = changed + " von " + cells.Count + " Zellen verändert (" + (amount > 0 ? "+" : string.Empty) + amount + ").";
+            statusLabel.Text = changed + " von " + cells.Count + " Zellen verändert ("
+                + (countDown ? "runter" : "hoch") + ": " + ShiftSequence.Format(sequence) + ").";
             statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
         }
 
         internal static string BuildConfirmationMessage(int amount, int cellCount, bool allValues)
         {
+            return BuildConfirmationMessage(new[] { Math.Abs(amount) }, amount < 0, cellCount, allValues);
+        }
+
+        internal static string BuildConfirmationMessage(IList<int> sequence, bool countDown, int cellCount, bool allValues)
+        {
             string subject = allValues ? "Alle Werte" : "Die ausgewählten Werte";
-            string direction = amount > 0 ? "hochgezählt" : "runtergezählt";
-            return subject + " werden um " + Math.Abs(amount) + " " + direction + ".\r\n\r\n"
-                + "Gewählter Zählwert: " + Math.Abs(amount) + "\r\n"
+            string direction = countDown ? "runtergezählt" : "hochgezählt";
+            string sequenceText = ShiftSequence.Format(sequence);
+            string description = sequence.Count == 1
+                ? subject + " werden um " + sequenceText + " " + direction + "."
+                : subject + " werden mit der Zählfolge " + sequenceText + " " + direction + ".";
+            return description + "\r\n\r\n"
+                + "Gewählte Zählfolge: " + sequenceText + "\r\n"
                 + "Betroffene Zellen: " + cellCount + "\r\n\r\n"
                 + "Möchtest du die Umwandlung durchführen?";
         }
@@ -3745,13 +4556,25 @@ namespace Panda
             scopeComboBox.Enabled = enabled;
             if (enabled && scopeComboBox.SelectedIndex < 0 && scopeComboBox.Items.Count > 0)
                 scopeComboBox.SelectedIndex = 0;
-            stepNumeric.Enabled = enabled;
+            simpleShiftNumeric.Enabled = enabled;
+            foreach (NumericUpDown numeric in advancedShiftNumerics)
+                numeric.Enabled = enabled;
             exportButton.Enabled = enabled;
             resetButton.Enabled = enabled;
-            templatesButton.Enabled = enabled;
-            clearButton.Enabled = enabled;
-            filterButton.Enabled = enabled;
+            bool enableMetroNavigation = !IsClassicDesign;
+            templatesButton.Enabled = enabled || enableMetroNavigation;
+            clearButton.Enabled = enabled || enableMetroNavigation;
+            filterButton.Enabled = enabled || enableMetroNavigation;
             scopeComboBox.Refresh();
+        }
+
+        private void ShowCsvRequiredMessage(string action)
+        {
+            MessageBox.Show(this,
+                "Bitte importiere zuerst eine CSV-Datei, bevor du \u201e" + action + "\u201c verwendest.",
+                "Keine CSV geladen",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         internal void LoadPreviewData()
@@ -3765,13 +4588,15 @@ namespace Panda
             importedPath = "beispiel.csv";
             activeRowFilter = null;
             PopulateGrids();
+            LoadShiftConfiguration("3-5-8-2-6");
+            var previewSequence = new List<int> { 3, 5, 8, 2, 6 };
             for (int column = 0; column < document.Headers.Count; column++)
-                resultGrid.Rows[0].Cells[column].Value = LetterShifter.Shift(document.Rows[0][column], 1);
+                resultGrid.Rows[0].Cells[column].Value = LetterShifter.Shift(document.Rows[0][column], previewSequence);
             originalGrid.Rows[0].Tag = true;
             RefreshCheckedRowSelections();
             baseFileLabelText = "beispiel.csv  •  4 Zeilen  •  4 Spalten  •  Trennzeichen: Semikolon";
             UpdateFileLabel(0);
-            statusLabel.Text = "3 von 4 Zellen verändert (+1).";
+            statusLabel.Text = "3 von 4 Zellen verändert (hoch: 3-5-8-2-6).";
             statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
             SetDocumentControlsEnabled(true);
             scopeComboBox.SelectedIndex = 0;
@@ -3786,6 +4611,46 @@ namespace Panda
         internal bool HasLoadedDocument
         {
             get { return document != null; }
+        }
+
+        internal bool UsesAdvancedShiftMode
+        {
+            get { return advancedShiftMode; }
+        }
+
+        internal string CurrentShiftSequence
+        {
+            get { return ShiftSequence.Format(GetConfiguredShiftValues()); }
+        }
+
+        internal string ShiftValuesCaptionText
+        {
+            get { return shiftValuesCaptionLabel.Text; }
+        }
+
+        internal string ShiftModeHintText
+        {
+            get { return sequenceRestartHint.Text; }
+        }
+
+        internal string ActiveInterfaceStyle
+        {
+            get { return activeInterfaceStyle; }
+        }
+
+        internal void LoadShiftConfigurationForTest(string sequenceText)
+        {
+            LoadShiftConfiguration(sequenceText);
+        }
+
+        internal void SetAdvancedShiftModeForTest(bool advanced)
+        {
+            SetAdvancedShiftMode(advanced);
+        }
+
+        internal void SwitchInterfaceStyleForTest(string interfaceStyle)
+        {
+            ApplyInterfaceStyle(interfaceStyle);
         }
 
         internal void ApplyFilterForTest(RowFilter filter)

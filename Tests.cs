@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Panda
 {
@@ -15,6 +16,18 @@ namespace Panda
             AssertEqual("Zab", LetterShifter.Shift("Abc", -1), "shift down and preserve case");
             AssertEqual("Öl 123!", LetterShifter.Shift("Öl 123!", 0), "zero shift");
             AssertEqual("Öm 123!", LetterShifter.Shift("Öl 123!", 1), "non A-Z characters unchanged");
+            var sequence = new List<int> { 3, 5, 8, 2 };
+            AssertEqual("DGKFH", LetterShifter.Shift("ABCDE", sequence), "cyclic sequence shifts letters");
+            AssertEqual("ABCDE", LetterShifter.Shift("DGKFH", sequence.Select(value => -value).ToList()), "cyclic sequence reverses");
+            AssertEqual("D-G", LetterShifter.Shift("A-B", new List<int> { 3, 5 }), "punctuation does not consume sequence position");
+            List<int> parsedSequence;
+            string sequenceError;
+            AssertEqual(true, ShiftSequence.TryParse("3-5-8-2", out parsedSequence, out sequenceError), "sequence parser accepts hyphen notation");
+            AssertEqual("3-5-8-2", ShiftSequence.Format(parsedSequence), "sequence formatting");
+            AssertEqual(false, ShiftSequence.TryParse("3-0-26", out parsedSequence, out sequenceError), "sequence parser enforces range");
+            AssertEqual("7", ShiftSequence.NormalizeForMainMode("7"), "simple main mode keeps one value");
+            AssertEqual("3-5-8-2-1", ShiftSequence.NormalizeForMainMode("3-5-8-2"), "advanced main mode pads to five values");
+            AssertEqual("1-2-3-4-5", ShiftSequence.NormalizeForMainMode("1-2-3-4-5-6"), "advanced main mode limits to five values");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("Meyer", "M*"), "wildcard star match");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("Bob", "B?b"), "wildcard question mark match");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("BERLIN Mitte", "*berlin*"), "wildcard ignores case");
@@ -38,13 +51,19 @@ namespace Panda
                 filterForm.Close();
             }
 
-            using (var quickForm = new QuickConversionForm(6))
+            using (var quickForm = new QuickConversionForm("6"))
             {
                 quickForm.SetInputText("Abc XYZ 123");
                 quickForm.ApplyShiftForTest(2);
                 AssertEqual("Cde ZAB 123", quickForm.ResultText, "quick conversion up");
                 quickForm.ApplyShiftForTest(-2);
                 AssertEqual("Yza VWX 123", quickForm.ResultText, "quick conversion down");
+                quickForm.SetInputText("ABCDE");
+                quickForm.ApplySequenceForTest("3-5-8-2", false);
+                AssertEqual("DGKFH", quickForm.ResultText, "quick conversion sequence up");
+                quickForm.SetInputText("DGKFH");
+                quickForm.ApplySequenceForTest("3-5-8-2", true);
+                AssertEqual("ABCDE", quickForm.ResultText, "quick conversion sequence down");
             }
 
             string sample = "Name;Notiz\r\n\"Meyer, Anna\";\"Hallo; Welt\"\r\nBob;\"Zeile 1\r\nZeile 2\"\r\n";
@@ -64,16 +83,18 @@ namespace Panda
             AssertEqual("C", filtered.Headers[0], "selected column order");
             AssertEqual("a2", filtered.Rows[1][1], "selected column values");
 
-            var settings = AppSettings.Parse(new[] { "DefaultShift=6", "ConfirmBeforeShift=False", "CheckForUpdates=False", "AskForUpdateCheckOnStart=True", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
-            AssertEqual(6, settings.DefaultShift, "settings default shift");
+            var settings = AppSettings.Parse(new[] { "DefaultShiftSequence=3-5-8-2", "InterfaceStyle=Classic", "ConfirmBeforeShift=False", "CheckForUpdates=False", "AskForUpdateCheckOnStart=True", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
+            AssertEqual("3-5-8-2", settings.DefaultShiftSequence, "settings default shift sequence");
+            AssertEqual("Classic", settings.InterfaceStyle, "settings classic interface");
             AssertEqual(false, settings.ConfirmBeforeShift, "settings confirmation flag");
             AssertEqual(false, settings.CheckForUpdates, "settings update check flag");
             AssertEqual(true, settings.AskForUpdateCheckOnStart, "settings ask on start update flag");
             AssertEqual(123L, settings.LastUpdateCheckUtcTicks, "settings last update check");
             AssertEqual("1.7.0", settings.LatestKnownVersion, "settings latest known version");
             var boundedSettings = AppSettings.Parse(new[] { "DefaultShift=99" });
-            AssertEqual(25, boundedSettings.DefaultShift, "settings upper bound");
-            AssertEqual("DefaultShift=6", settings.Serialize()[0], "settings serialization");
+            AssertEqual("25", boundedSettings.DefaultShiftSequence, "legacy settings upper bound");
+            AssertEqual("DefaultShiftSequence=3-5-8-2", settings.Serialize()[0], "settings sequence serialization");
+            AssertEqual("InterfaceStyle=Classic", settings.Serialize()[1], "settings interface serialization");
             Version parsedUpdateVersion = UpdateChecker.ParseLatestVersion("{\"tag_name\":\"v1.7.0\"}");
             AssertEqual("1.7.0", UpdateChecker.DisplayVersion(parsedUpdateVersion), "github update version parsing");
             AssertEqual(true, UpdateChecker.IsNewer(parsedUpdateVersion, new Version(1, 6, 0, 0)), "new update detected");
@@ -96,6 +117,8 @@ namespace Panda
             AssertEqual(true, confirmationUp.Contains("Betroffene Zellen: 12"), "confirmation affected cells");
             string confirmationDown = MainForm.BuildConfirmationMessage(-4, 20, true);
             AssertEqual(true, confirmationDown.Contains("Alle Werte werden um 4 runtergezählt."), "confirmation count down text");
+            string confirmationSequence = MainForm.BuildConfirmationMessage(new[] { 3, 5, 8, 2 }, false, 9, false);
+            AssertEqual(true, confirmationSequence.Contains("mit der Zählfolge 3-5-8-2 hochgezählt"), "confirmation sequence text");
 
             var template = new SelectionTemplate("Vorname & Büro", new[] { "Vorname", "Büro|Nord" });
             string serializedTemplate = SelectionTemplateStore.SerializeLine(template);
@@ -111,9 +134,20 @@ namespace Panda
             AssertEqual(1, templateIndices[0], "template matching ignores case");
             AssertEqual(3, templateIndices[1], "template matching office");
 
-            using (var form = new MainForm())
+            using (var form = new MainForm(false, "Metro"))
             {
                 form.LoadPreviewData();
+                AssertEqual(true, form.UsesAdvancedShiftMode, "preview uses advanced shift mode");
+                AssertEqual("3-5-8-2-6", form.CurrentShiftSequence, "advanced mode exposes five separate values");
+                AssertEqual("CHIFFRE", form.ShiftValuesCaptionText, "advanced mode uses cipher caption");
+                AssertEqual("Zählfolge beginnt je Wert neu", form.ShiftModeHintText, "advanced mode explains sequence restart");
+                form.SetAdvancedShiftModeForTest(false);
+                AssertEqual(false, form.UsesAdvancedShiftMode, "mode switch activates simple shift mode");
+                AssertEqual("3", form.CurrentShiftSequence, "simple mode uses one value");
+                AssertEqual("ZÄHLWERT", form.ShiftValuesCaptionText, "simple mode uses singular value caption");
+                AssertEqual("Ein Zählwert gilt für alle Buchstaben", form.ShiftModeHintText, "simple mode explains single value behavior");
+                form.SetAdvancedShiftModeForTest(true);
+                AssertEqual("3-5-8-2-6", form.CurrentShiftSequence, "advanced values survive a mode roundtrip");
                 form.SelectOriginalColumn(1, false);
                 AssertEqual(4, form.SelectedCellCount, "column header selects complete column");
                 AssertEqual(true, form.IsColumnFullySelected(1), "first selected column is complete");
@@ -125,12 +159,24 @@ namespace Panda
                 AssertEqual(false, form.IsColumnFullySelected(1), "removed column is no longer complete");
                 form.ApplyFilterForTest(new RowFilter(3, new[] { "Hamburg" }, "M*"));
                 AssertEqual(2, form.VisibleRowCount, "filter hides matching rows in main view");
+                form.SwitchInterfaceStyleForTest("Classic");
+                AssertEqual("Classic", form.ActiveInterfaceStyle, "design changes immediately to classic");
+                AssertEqual(true, form.HasLoadedDocument, "live design change keeps imported document");
+                AssertEqual(2, form.VisibleRowCount, "live design change keeps active filter");
+                form.SwitchInterfaceStyleForTest("Metro");
+                AssertEqual("Metro", form.ActiveInterfaceStyle, "design changes immediately back to metro");
+                AssertEqual(2, form.VisibleRowCount, "second live design change keeps rows");
                 form.SelectOriginalColumn(1, false);
                 AssertEqual(2, form.SelectedCellCount, "column selection excludes hidden rows");
                 form.ApplyFilterForTest(null);
                 AssertEqual(4, form.VisibleRowCount, "clearing filter restores rows");
                 form.ClearDocumentForTest();
                 AssertEqual(false, form.HasLoadedDocument, "clear removes current document");
+            }
+            using (var classicForm = new MainForm(false, "Classic"))
+            {
+                classicForm.LoadPreviewData();
+                AssertEqual(4, classicForm.VisibleRowCount, "classic backup design remains functional");
             }
 
             AssertEqual(20, ExportRowSelector.SelectRows(20, ExportRowMode.All, 0, null, null).Count, "export all rows");

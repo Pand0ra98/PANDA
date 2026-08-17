@@ -11,8 +11,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installer für PANDA")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("1.9.0.0")]
-[assembly: AssemblyFileVersion("1.9.0.0")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
 namespace PandaSetup
 {
@@ -143,7 +143,7 @@ namespace PandaSetup
             });
             heading.Controls.Add(new Label
             {
-                Text = "Version 1.9.0  •  Installation für den aktuellen Windows-Benutzer",
+                Text = "Version 2.0.0  •  Installation für den aktuellen Windows-Benutzer",
                 ForeColor = Blue,
                 AutoSize = true,
                 Location = new Point(2, 73)
@@ -329,7 +329,7 @@ namespace PandaSetup
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PANDA"))
             {
                 key.SetValue("DisplayName", "PANDA");
-                key.SetValue("DisplayVersion", "1.9.0");
+                key.SetValue("DisplayVersion", "2.0.0");
                 key.SetValue("DisplayIcon", applicationPath);
                 key.SetValue("Publisher", "PANDA");
                 key.SetValue("InstallLocation", target);
