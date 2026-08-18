@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyFileVersion("2.1.0.0")]
 
 namespace Panda
 {
@@ -556,6 +556,33 @@ namespace Panda
             if (!TryParse(text, out values, out errorMessage))
                 return "1";
             return values.Count == 1 ? Format(values) : Format(ToFiveValues(values));
+        }
+    }
+
+    internal static class CipherClipboard
+    {
+        internal static bool TryParseFiveValues(string text, out List<int> values)
+        {
+            values = new List<int>();
+            List<int> parsedValues;
+            string errorMessage;
+            if (!ShiftSequence.TryParse(text, out parsedValues, out errorMessage) || parsedValues.Count < 2 || parsedValues.Count > 5)
+                return false;
+            values = ShiftSequence.ToFiveValues(parsedValues);
+            return true;
+        }
+    }
+
+    internal sealed class CipherNumericUpDown : NumericUpDown
+    {
+        internal Func<bool> PasteSequenceHandler { get; set; }
+
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+        {
+            bool pasteShortcut = (keyData & Keys.Control) == Keys.Control && (keyData & Keys.KeyCode) == Keys.V;
+            if (pasteShortcut && PasteSequenceHandler != null && PasteSequenceHandler())
+                return true;
+            return base.ProcessCmdKey(ref message, keyData);
         }
     }
 
@@ -2276,7 +2303,14 @@ namespace Panda
         private readonly Color Muted = Color.FromArgb(94, 108, 128);
         private readonly TextBox inputTextBox = new TextBox();
         private readonly TextBox resultTextBox = new TextBox();
-        private readonly TextBox shiftSequenceTextBox = new TextBox();
+        private readonly TabControl conversionModeTabs = new TabControl();
+        private readonly TabPage standardTabPage = new TabPage("Standard");
+        private readonly TabPage advancedTabPage = new TabPage("Erweitert");
+        private readonly NumericUpDown standardShiftNumeric = new NumericUpDown();
+        private readonly CipherNumericUpDown[] advancedShiftNumerics =
+        {
+            new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown()
+        };
         private readonly Button copyButton = new Button();
 
         internal string ResultText { get { return resultTextBox.Text; } }
@@ -2288,7 +2322,7 @@ namespace Panda
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(720, 590);
+            ClientSize = new Size(780, 650);
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -2338,50 +2372,18 @@ namespace Panda
                 Margin = new Padding(0, 0, 0, 12)
             };
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-            card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            card.RowStyles.Add(new RowStyle(SizeType.Percent, 46));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-            card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            card.RowStyles.Add(new RowStyle(SizeType.Percent, 54));
             root.Controls.Add(card, 0, 1);
 
             card.Controls.Add(CreateSectionLabel("Eingabetext"), 0, 0);
             ConfigureTextBox(inputTextBox, false);
             card.Controls.Add(inputTextBox, 0, 1);
 
-            var controls = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 6,
-                RowCount = 1,
-                Padding = new Padding(0, 10, 0, 8),
-                Margin = new Padding(0)
-            };
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
-            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
-            controls.Controls.Add(new Label
-            {
-                Text = "Zählfolge",
-                ForeColor = Navy,
-                AutoSize = true,
-                Anchor = AnchorStyles.Left
-            }, 0, 0);
-            shiftSequenceTextBox.Text = ShiftSequence.Normalize(defaultShiftSequence, "1");
-            shiftSequenceTextBox.TextAlign = HorizontalAlignment.Center;
-            shiftSequenceTextBox.MaxLength = 200;
-            shiftSequenceTextBox.Dock = DockStyle.Fill;
-            shiftSequenceTextBox.Margin = new Padding(0);
-            controls.Controls.Add(shiftSequenceTextBox, 1, 0);
-            var upButton = CreateActionButton("Hochzählen  +", Color.FromArgb(29, 157, 105));
-            upButton.Click += delegate { ApplyConfiguredShift(false); };
-            controls.Controls.Add(upButton, 3, 0);
-            var downButton = CreateActionButton("Runterzählen  −", Color.FromArgb(230, 91, 84));
-            downButton.Click += delegate { ApplyConfiguredShift(true); };
-            controls.Controls.Add(downButton, 5, 0);
-            card.Controls.Add(controls, 0, 2);
+            BuildConversionModeTabs(defaultShiftSequence);
+            card.Controls.Add(conversionModeTabs, 0, 2);
 
             card.Controls.Add(CreateSectionLabel("Ergebnis"), 0, 3);
             ConfigureTextBox(resultTextBox, true);
@@ -2418,6 +2420,151 @@ namespace Panda
             footer.Controls.Add(closeButton, 3, 0);
             root.Controls.Add(footer, 0, 2);
             CancelButton = closeButton;
+        }
+
+        private void BuildConversionModeTabs(string defaultShiftSequence)
+        {
+            List<int> defaultValues;
+            string errorMessage;
+            string normalized = ShiftSequence.Normalize(defaultShiftSequence, "1");
+            if (!ShiftSequence.TryParse(normalized, out defaultValues, out errorMessage))
+                defaultValues = new List<int> { 1 };
+
+            ConfigureShiftNumeric(standardShiftNumeric, 88);
+            standardShiftNumeric.Value = defaultValues[0];
+            List<int> advancedValues = ShiftSequence.ToFiveValues(defaultValues);
+            for (int index = 0; index < advancedShiftNumerics.Length; index++)
+            {
+                ConfigureShiftNumeric(advancedShiftNumerics[index], 42);
+                advancedShiftNumerics[index].PasteSequenceHandler = PasteAdvancedCipherFromClipboard;
+                advancedShiftNumerics[index].Value = advancedValues[index];
+            }
+
+            conversionModeTabs.Dock = DockStyle.Fill;
+            conversionModeTabs.Margin = new Padding(0, 6, 0, 6);
+            conversionModeTabs.Padding = new Point(18, 6);
+            conversionModeTabs.SizeMode = TabSizeMode.Fixed;
+            conversionModeTabs.ItemSize = new Size(150, 28);
+
+            ConfigureModeTabPage(standardTabPage);
+            ConfigureModeTabPage(advancedTabPage);
+            standardTabPage.Controls.Add(CreateStandardModeControls());
+            advancedTabPage.Controls.Add(CreateAdvancedModeControls());
+            conversionModeTabs.TabPages.Add(standardTabPage);
+            conversionModeTabs.TabPages.Add(advancedTabPage);
+            conversionModeTabs.SelectedTab = defaultValues.Count > 1 ? advancedTabPage : standardTabPage;
+        }
+
+        private void ConfigureModeTabPage(TabPage page)
+        {
+            page.BackColor = Color.White;
+            page.ForeColor = Navy;
+            page.Padding = new Padding(10, 8, 10, 8);
+            page.UseVisualStyleBackColor = false;
+        }
+
+        private Control CreateStandardModeControls()
+        {
+            var controls = CreateModeControlsGrid(86, 100, 150);
+            controls.Controls.Add(CreateModeLabel("Zählwert"), 0, 0);
+            controls.Controls.Add(standardShiftNumeric, 1, 0);
+            AddQuickActionButtons(controls);
+            return controls;
+        }
+
+        private Control CreateAdvancedModeControls()
+        {
+            var controls = CreateModeControlsGrid(56, 286, 132);
+            controls.Controls.Add(CreateModeLabel("Chiffre"), 0, 0);
+
+            var sequence = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 9,
+                RowCount = 1,
+                Margin = new Padding(0)
+            };
+            sequence.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            for (int index = 0; index < advancedShiftNumerics.Length; index++)
+            {
+                int column = index * 2;
+                sequence.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));
+                sequence.Controls.Add(advancedShiftNumerics[index], column, 0);
+                if (index < advancedShiftNumerics.Length - 1)
+                {
+                    sequence.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
+                    sequence.Controls.Add(new Panel
+                    {
+                        BackColor = Color.FromArgb(150, 160, 174),
+                        Size = new Size(8, 2),
+                        Anchor = AnchorStyles.None,
+                        Margin = new Padding(0)
+                    }, column + 1, 0);
+                }
+            }
+            controls.Controls.Add(sequence, 1, 0);
+            controls.Controls.Add(new Label
+            {
+                Text = "Strg+V",
+                ForeColor = Muted,
+                Font = new Font("Segoe UI", 7.5F),
+                AutoSize = true,
+                Anchor = AnchorStyles.None
+            }, 2, 0);
+            AddQuickActionButtons(controls);
+            return controls;
+        }
+
+        private TableLayoutPanel CreateModeControlsGrid(int labelWidth, int valueWidth, int buttonWidth)
+        {
+            var controls = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 6,
+                RowCount = 1,
+                Margin = new Padding(0)
+            };
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelWidth));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, valueWidth));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, buttonWidth));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            controls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, buttonWidth));
+            controls.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            return controls;
+        }
+
+        private Label CreateModeLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                ForeColor = Navy,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left
+            };
+        }
+
+        private static void ConfigureShiftNumeric(NumericUpDown numeric, int width)
+        {
+            numeric.Minimum = 1;
+            numeric.Maximum = 25;
+            numeric.Value = 1;
+            numeric.TextAlign = HorizontalAlignment.Center;
+            numeric.Width = width;
+            numeric.Anchor = AnchorStyles.None;
+            numeric.Margin = new Padding(0);
+            numeric.Font = new Font("Segoe UI Semibold", 9F);
+        }
+
+        private void AddQuickActionButtons(TableLayoutPanel controls)
+        {
+            var upButton = CreateActionButton("Hochzählen  +", Color.FromArgb(29, 157, 105));
+            upButton.Click += delegate { ApplyConfiguredShift(false); };
+            controls.Controls.Add(upButton, 3, 0);
+            var downButton = CreateActionButton("Runterzählen  −", Color.FromArgb(230, 91, 84));
+            downButton.Click += delegate { ApplyConfiguredShift(true); };
+            controls.Controls.Add(downButton, 5, 0);
         }
 
         private Label CreateSectionLabel(string text)
@@ -2472,25 +2619,68 @@ namespace Panda
             button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
         }
 
-        private void ApplyConfiguredShift(bool countDown)
+        private bool PasteAdvancedCipherFromClipboard()
+        {
+            try
+            {
+                return Clipboard.ContainsText() && ApplyPastedCipher(Clipboard.GetText(TextDataFormat.Text));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool ApplyPastedCipher(string text)
         {
             List<int> values;
-            string errorMessage;
-            if (!ShiftSequence.TryParse(shiftSequenceTextBox.Text, out values, out errorMessage))
-            {
-                MessageBox.Show(this, errorMessage, "Ungültige Zählfolge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                shiftSequenceTextBox.Focus();
-                shiftSequenceTextBox.SelectAll();
-                return;
-            }
-            shiftSequenceTextBox.Text = ShiftSequence.Format(values);
+            if (!CipherClipboard.TryParseFiveValues(text, out values))
+                return false;
+            for (int index = 0; index < advancedShiftNumerics.Length; index++)
+                advancedShiftNumerics[index].Value = values[index];
+            conversionModeTabs.SelectedTab = advancedTabPage;
+            return true;
+        }
+
+        private void ApplyConfiguredShift(bool countDown)
+        {
+            List<int> values = GetConfiguredShiftValues();
             ApplyShift(values.Select(value => countDown ? -value : value).ToList());
+        }
+
+        private List<int> GetConfiguredShiftValues()
+        {
+            if (conversionModeTabs.SelectedTab == advancedTabPage)
+                return advancedShiftNumerics.Select(numeric => (int)numeric.Value).ToList();
+            return new List<int> { (int)standardShiftNumeric.Value };
         }
 
         private void ApplyShift(IList<int> amounts)
         {
-            resultTextBox.Text = LetterShifter.Shift(inputTextBox.Text, amounts);
+            resultTextBox.Text = ShiftValuesByLine(inputTextBox.Text, amounts);
             copyButton.Enabled = resultTextBox.TextLength > 0;
+        }
+
+        internal static string ShiftValuesByLine(string text, IList<int> amounts)
+        {
+            string source = text ?? string.Empty;
+            var result = new StringBuilder(source.Length);
+            int valueStart = 0;
+            for (int index = 0; index < source.Length; index++)
+            {
+                if (source[index] != '\r' && source[index] != '\n')
+                    continue;
+                result.Append(LetterShifter.Shift(source.Substring(valueStart, index - valueStart), amounts));
+                result.Append(source[index]);
+                if (source[index] == '\r' && index + 1 < source.Length && source[index + 1] == '\n')
+                {
+                    result.Append('\n');
+                    index++;
+                }
+                valueStart = index + 1;
+            }
+            result.Append(LetterShifter.Shift(source.Substring(valueStart), amounts));
+            return result.ToString();
         }
 
         private void CopyResult()
@@ -2519,12 +2709,53 @@ namespace Panda
 
         internal void ApplySequenceForTest(string sequence, bool countDown)
         {
-            shiftSequenceTextBox.Text = sequence;
             List<int> values;
             string errorMessage;
             if (!ShiftSequence.TryParse(sequence, out values, out errorMessage))
                 throw new InvalidOperationException(errorMessage);
-            ApplyShift(values.Select(value => countDown ? -value : value).ToList());
+            if (values.Count == 1)
+            {
+                standardShiftNumeric.Value = values[0];
+                conversionModeTabs.SelectedTab = standardTabPage;
+            }
+            else
+            {
+                List<int> advancedValues = ShiftSequence.ToFiveValues(values);
+                for (int index = 0; index < advancedShiftNumerics.Length; index++)
+                    advancedShiftNumerics[index].Value = advancedValues[index];
+                conversionModeTabs.SelectedTab = advancedTabPage;
+            }
+            ApplyConfiguredShift(countDown);
+        }
+
+        internal int ModeTabCount
+        {
+            get { return conversionModeTabs.TabCount; }
+        }
+
+        internal string StandardTabText
+        {
+            get { return standardTabPage.Text; }
+        }
+
+        internal string AdvancedTabText
+        {
+            get { return advancedTabPage.Text; }
+        }
+
+        internal bool UsesAdvancedMode
+        {
+            get { return conversionModeTabs.SelectedTab == advancedTabPage; }
+        }
+
+        internal string CurrentShiftSequence
+        {
+            get { return ShiftSequence.Format(GetConfiguredShiftValues()); }
+        }
+
+        internal bool PasteCipherForTest(string text)
+        {
+            return ApplyPastedCipher(text);
         }
 
         internal void LoadPreviewData()
@@ -3030,9 +3261,9 @@ namespace Panda
         private readonly DataGridView resultGrid = new DataGridView();
         private readonly ComboBox scopeComboBox = new ComboBox();
         private readonly NumericUpDown simpleShiftNumeric = new NumericUpDown();
-        private readonly NumericUpDown[] advancedShiftNumerics =
+        private readonly CipherNumericUpDown[] advancedShiftNumerics =
         {
-            new NumericUpDown(), new NumericUpDown(), new NumericUpDown(), new NumericUpDown(), new NumericUpDown()
+            new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown()
         };
         private readonly TableLayoutPanel shiftValueHost = new TableLayoutPanel();
         private readonly TableLayoutPanel simpleShiftPanel = new TableLayoutPanel();
@@ -3141,8 +3372,11 @@ namespace Panda
 
             ConfigureShiftNumeric(simpleShiftNumeric);
             simpleShiftNumeric.Width = 88;
-            foreach (NumericUpDown numeric in advancedShiftNumerics)
+            foreach (CipherNumericUpDown numeric in advancedShiftNumerics)
+            {
                 ConfigureShiftNumeric(numeric);
+                numeric.PasteSequenceHandler = PasteAdvancedCipherFromClipboard;
+            }
 
             simpleShiftPanel.Dock = DockStyle.Fill;
             simpleShiftPanel.ColumnCount = 2;
@@ -3455,24 +3689,30 @@ namespace Panda
                 AutoSize = true,
                 Location = new Point(2, 39)
             };
-            var headerActions = new Panel
+            var headerActions = new TableLayoutPanel
             {
                 Dock = DockStyle.Right,
                 Width = 382,
-                BackColor = Background
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Background,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
             };
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            headerActions.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
             quickConversionButton.Text = "Schnellumwandlung";
             StyleSecondaryButton(quickConversionButton);
-            quickConversionButton.Dock = DockStyle.None;
-            quickConversionButton.Size = new Size(176, 34);
-            quickConversionButton.Location = new Point(0, 5);
-            headerActions.Controls.Add(quickConversionButton);
+            quickConversionButton.BackColor = Blue;
+            quickConversionButton.ForeColor = Color.White;
+            quickConversionButton.FlatAppearance.BorderSize = 0;
+            quickConversionButton.Margin = new Padding(0, 5, 7, 5);
+            headerActions.Controls.Add(quickConversionButton, 0, 0);
             updateButton.Text = "Updates prüfen";
             StyleSecondaryButton(updateButton);
-            updateButton.Dock = DockStyle.None;
-            updateButton.Size = new Size(176, 34);
-            updateButton.Location = new Point(190, 5);
-            headerActions.Controls.Add(updateButton);
+            updateButton.Margin = new Padding(7, 5, 0, 5);
+            headerActions.Controls.Add(updateButton, 1, 0);
             header.Controls.Add(headerActions);
             header.Controls.Add(title);
             header.Controls.Add(subtitle);
@@ -3759,6 +3999,31 @@ namespace Panda
                 ? "Zählfolge beginnt je Wert neu"
                 : "Ein Zählwert gilt für alle Buchstaben";
             sequenceRestartHint.Visible = true;
+        }
+
+        private bool PasteAdvancedCipherFromClipboard()
+        {
+            try
+            {
+                return Clipboard.ContainsText() && ApplyPastedCipher(Clipboard.GetText(TextDataFormat.Text));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool ApplyPastedCipher(string text)
+        {
+            List<int> values;
+            if (!CipherClipboard.TryParseFiveValues(text, out values))
+                return false;
+            SetAdvancedShiftMode(true);
+            for (int index = 0; index < advancedShiftNumerics.Length; index++)
+                advancedShiftNumerics[index].Value = values[index];
+            statusLabel.Text = "Chiffre eingefügt: " + ShiftSequence.Format(values) + ".";
+            statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+            return true;
         }
 
         private List<int> GetConfiguredShiftValues()
@@ -4638,9 +4903,19 @@ namespace Panda
             get { return activeInterfaceStyle; }
         }
 
+        internal bool HasQuickConversionButtonInLayout
+        {
+            get { return quickConversionButton.Parent != null && string.Equals(quickConversionButton.Text, "Schnellumwandlung", StringComparison.Ordinal); }
+        }
+
         internal void LoadShiftConfigurationForTest(string sequenceText)
         {
             LoadShiftConfiguration(sequenceText);
+        }
+
+        internal bool PasteCipherForTest(string text)
+        {
+            return ApplyPastedCipher(text);
         }
 
         internal void SetAdvancedShiftModeForTest(bool advanced)

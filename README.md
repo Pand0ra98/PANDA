@@ -43,7 +43,7 @@ Der Filter blendet Treffer synchron in der Original- und Ergebnistabelle aus. Au
 
 ## Schnellumwandlung
 
-Über **Schnellumwandlung** lässt sich Text auch ohne CSV-Import direkt bearbeiten. Text und eine Zählfolge eingeben und anschließend **Hochzählen (+)** oder **Runterzählen (-)** anklicken. Das Ergebnis erscheint in einem separaten Feld und kann in die Zwischenablage kopiert werden. Die Eingabe wird nicht gespeichert und verändert keine bereits importierten CSV-Daten.
+Über **Schnellumwandlung** lässt sich Text auch ohne CSV-Import direkt bearbeiten. Das Fenster besitzt die Tabs **Standard** und **Erweitert**. Im Standard-Tab wird ein einzelner Zählwert verwendet; im erweiterten Tab steht dieselbe Chiffre aus fünf getrennten Zahlenfeldern wie im Hauptfenster zur Verfügung. Eine komplette Chiffre wie `3-5-8-2-6` kann im Hauptfenster und in der Schnellumwandlung mit **Strg+V** in eines der fünf Felder eingefügt werden; PANDA verteilt die Werte automatisch. Bindestriche, Kommas, Semikolons und Leerzeichen werden als Trennzeichen erkannt. Bei mehreren untereinander eingefügten Werten beginnt die Chiffre in jeder Zeile neu. Mit **Hochzählen (+)** wird der Text umgewandelt, mit **Runterzählen (-)** lässt er sich mit derselben Chiffre wieder zurückwandeln. Das Ergebnis kann in die Zwischenablage kopiert werden. Die Eingabe wird nicht gespeichert und verändert keine bereits importierten CSV-Daten.
 
 ## Einfache und erweiterte Verschlüsselung
 
@@ -51,7 +51,7 @@ Im Modus **Einfach** wird ein einzelner Wert zwischen 1 und 25 auf jeden Buchsta
 
 Bei `3-5-8-2-6` wird der erste Buchstabe um 3, der zweite um 5, der dritte um 8, der vierte um 2 und der fünfte um 6 verschoben. Danach beginnt die Folge wieder bei 3. Der Hinweis **Zählfolge beginnt je Wert neu** wird nur im erweiterten Modus angezeigt. Zahlen, Leerzeichen, Satzzeichen und Umlaute werden nicht verschoben und verbrauchen keinen Schritt der Folge. **Runterzählen** mit derselben Folge stellt den ursprünglichen Text wieder her.
 
-Die Schnellumwandlung akzeptiert weiterhin frei eingegebene Folgen aus 1 bis 32 Werten. Als Trennzeichen können Bindestriche, Kommas, Semikolons oder Leerzeichen verwendet werden.
+Beim Öffnen der Schnellumwandlung wird automatisch der Tab gewählt, der zur aktuell im Hauptfenster eingestellten Verschlüsselungsart passt.
 
 ## Einstellungen
 

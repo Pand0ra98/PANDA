@@ -28,6 +28,12 @@ namespace Panda
             AssertEqual("7", ShiftSequence.NormalizeForMainMode("7"), "simple main mode keeps one value");
             AssertEqual("3-5-8-2-1", ShiftSequence.NormalizeForMainMode("3-5-8-2"), "advanced main mode pads to five values");
             AssertEqual("1-2-3-4-5", ShiftSequence.NormalizeForMainMode("1-2-3-4-5-6"), "advanced main mode limits to five values");
+            List<int> pastedCipher;
+            AssertEqual(true, CipherClipboard.TryParseFiveValues("3-5-8-2-6", out pastedCipher), "clipboard recognizes full cipher");
+            AssertEqual("3-5-8-2-6", ShiftSequence.Format(pastedCipher), "clipboard distributes five cipher values");
+            AssertEqual(true, CipherClipboard.TryParseFiveValues("4, 6, 2, 8, 3", out pastedCipher), "clipboard accepts comma separators");
+            AssertEqual(false, CipherClipboard.TryParseFiveValues("6", out pastedCipher), "single clipboard value stays in current field");
+            AssertEqual(false, CipherClipboard.TryParseFiveValues("1-2-3-4-5-6", out pastedCipher), "clipboard rejects more than five cipher values");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("Meyer", "M*"), "wildcard star match");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("Bob", "B?b"), "wildcard question mark match");
             AssertEqual(true, RowFilterEngine.WildcardIsMatch("BERLIN Mitte", "*berlin*"), "wildcard ignores case");
@@ -53,17 +59,30 @@ namespace Panda
 
             using (var quickForm = new QuickConversionForm("6"))
             {
+                AssertEqual(2, quickForm.ModeTabCount, "quick conversion exposes two mode tabs");
+                AssertEqual("Standard", quickForm.StandardTabText, "quick conversion standard tab title");
+                AssertEqual("Erweitert", quickForm.AdvancedTabText, "quick conversion advanced tab title");
+                AssertEqual(false, quickForm.UsesAdvancedMode, "single default value selects standard tab");
+                AssertEqual("6", quickForm.CurrentShiftSequence, "standard tab exposes one shift value");
+                AssertEqual(true, quickForm.PasteCipherForTest("4-6-2-8-3"), "quick conversion accepts pasted cipher");
+                AssertEqual(true, quickForm.UsesAdvancedMode, "pasted cipher selects advanced quick tab");
+                AssertEqual("4-6-2-8-3", quickForm.CurrentShiftSequence, "quick conversion distributes pasted cipher");
                 quickForm.SetInputText("Abc XYZ 123");
                 quickForm.ApplyShiftForTest(2);
                 AssertEqual("Cde ZAB 123", quickForm.ResultText, "quick conversion up");
                 quickForm.ApplyShiftForTest(-2);
                 AssertEqual("Yza VWX 123", quickForm.ResultText, "quick conversion down");
                 quickForm.SetInputText("ABCDE");
-                quickForm.ApplySequenceForTest("3-5-8-2", false);
-                AssertEqual("DGKFH", quickForm.ResultText, "quick conversion sequence up");
-                quickForm.SetInputText("DGKFH");
-                quickForm.ApplySequenceForTest("3-5-8-2", true);
+                quickForm.ApplySequenceForTest("3-5-8-2-6", false);
+                AssertEqual(true, quickForm.UsesAdvancedMode, "sequence selects advanced tab");
+                AssertEqual("3-5-8-2-6", quickForm.CurrentShiftSequence, "advanced quick conversion uses five cipher values");
+                AssertEqual("DGKFK", quickForm.ResultText, "quick conversion sequence up");
+                quickForm.SetInputText("DGKFK");
+                quickForm.ApplySequenceForTest("3-5-8-2-6", true);
                 AssertEqual("ABCDE", quickForm.ResultText, "quick conversion sequence down");
+                quickForm.SetInputText("ABCDE\r\nABCDE");
+                quickForm.ApplySequenceForTest("3-5-8-2-6", false);
+                AssertEqual("DGKFK\r\nDGKFK", quickForm.ResultText, "advanced quick conversion restarts cipher per line");
             }
 
             string sample = "Name;Notiz\r\n\"Meyer, Anna\";\"Hallo; Welt\"\r\nBob;\"Zeile 1\r\nZeile 2\"\r\n";
@@ -148,6 +167,9 @@ namespace Panda
                 AssertEqual("Ein Zählwert gilt für alle Buchstaben", form.ShiftModeHintText, "simple mode explains single value behavior");
                 form.SetAdvancedShiftModeForTest(true);
                 AssertEqual("3-5-8-2-6", form.CurrentShiftSequence, "advanced values survive a mode roundtrip");
+                AssertEqual(true, form.PasteCipherForTest("4;6;2;8;3"), "main view accepts pasted cipher");
+                AssertEqual(true, form.UsesAdvancedShiftMode, "pasted cipher activates advanced main mode");
+                AssertEqual("4-6-2-8-3", form.CurrentShiftSequence, "main view distributes pasted cipher");
                 form.SelectOriginalColumn(1, false);
                 AssertEqual(4, form.SelectedCellCount, "column header selects complete column");
                 AssertEqual(true, form.IsColumnFullySelected(1), "first selected column is complete");
@@ -177,6 +199,7 @@ namespace Panda
             {
                 classicForm.LoadPreviewData();
                 AssertEqual(4, classicForm.VisibleRowCount, "classic backup design remains functional");
+                AssertEqual(true, classicForm.HasQuickConversionButtonInLayout, "classic design contains quick conversion button");
             }
 
             AssertEqual(20, ExportRowSelector.SelectRows(20, ExportRowMode.All, 0, null, null).Count, "export all rows");
