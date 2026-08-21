@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Pseudonymisierung alphanumerischer Nutzdaten durch Alphabetverschiebung")]
 [assembly: AssemblyProduct("PANDA")]
 [assembly: AssemblyCompany("PANDA")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
 
 namespace Panda
 {
@@ -115,7 +115,7 @@ namespace Panda
             }
             if (args.Length == 2 && string.Equals(args[0], "--settings-screenshot", StringComparison.OrdinalIgnoreCase))
             {
-                var previewSettings = new AppSettings { DefaultShiftSequence = "3-5-8-2", ConfirmBeforeShift = true, AskForUpdateCheckOnStart = true, InterfaceStyle = "Metro" };
+                var previewSettings = new AppSettings { DefaultShiftSequence = "3-5-8-2", ConfirmBeforeShift = true, CompatibilityMode = true, AskForUpdateCheckOnStart = true, InterfaceStyle = "Metro" };
                 using (var settingsForm = new SettingsForm(previewSettings))
                 {
                     settingsForm.Show();
@@ -188,6 +188,38 @@ namespace Panda
                         bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                     }
                     exportForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--columns-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var columnsForm = new ColumnManagerForm(new[] { "Kundennummer", "Vorname", "Nachname", "Büro", "Ort" }))
+                {
+                    columnsForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(columnsForm.Width, columnsForm.Height))
+                    {
+                        columnsForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, columnsForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    columnsForm.Close();
+                }
+                return;
+            }
+            if (args.Length == 2 && string.Equals(args[0], "--export-names-screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                using (var namesForm = new ExportColumnNamesForm(new[] { "Kundennummer", "Vorname", "Nachname", "Büro", "Ort" }))
+                {
+                    namesForm.SetExportNameForTest(0, "CustomerId");
+                    namesForm.SetExportNameForTest(3, "Office");
+                    namesForm.Show();
+                    Application.DoEvents();
+                    using (var bitmap = new Bitmap(namesForm.Width, namesForm.Height))
+                    {
+                        namesForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, namesForm.Size));
+                        bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    namesForm.Close();
                 }
                 return;
             }
@@ -488,6 +520,31 @@ namespace Panda
         }
     }
 
+    internal static class CompatibilityConverter
+    {
+        internal static string ToAscii(string value)
+        {
+            string source = value ?? string.Empty;
+            var result = new StringBuilder(source.Length);
+            foreach (char character in source)
+            {
+                switch (character)
+                {
+                    case 'ä': result.Append("ae"); break;
+                    case 'ö': result.Append("oe"); break;
+                    case 'ü': result.Append("ue"); break;
+                    case 'Ä': result.Append("Ae"); break;
+                    case 'Ö': result.Append("Oe"); break;
+                    case 'Ü': result.Append("Ue"); break;
+                    case 'ß': result.Append("ss"); break;
+                    case 'ẞ': result.Append("SS"); break;
+                    default: result.Append(character); break;
+                }
+            }
+            return result.ToString();
+        }
+    }
+
     internal static class ShiftSequence
     {
         internal static bool TryParse(string text, out List<int> values, out string errorMessage)
@@ -591,6 +648,7 @@ namespace Panda
         public string DefaultShiftSequence = "1";
         public string InterfaceStyle = "Metro";
         public bool ConfirmBeforeShift = true;
+        public bool CompatibilityMode;
         public bool CheckForUpdates = true;
         public bool AskForUpdateCheckOnStart;
         public long LastUpdateCheckUtcTicks;
@@ -658,6 +716,12 @@ namespace Panda
                     if (bool.TryParse(value, out parsed))
                         settings.ConfirmBeforeShift = parsed;
                 }
+                else if (string.Equals(key, "CompatibilityMode", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool parsed;
+                    if (bool.TryParse(value, out parsed))
+                        settings.CompatibilityMode = parsed;
+                }
                 else if (string.Equals(key, "CheckForUpdates", StringComparison.OrdinalIgnoreCase))
                 {
                     bool parsed;
@@ -700,6 +764,7 @@ namespace Panda
                 "DefaultShiftSequence=" + DefaultShiftSequence,
                 "InterfaceStyle=" + InterfaceStyle,
                 "ConfirmBeforeShift=" + ConfirmBeforeShift,
+                "CompatibilityMode=" + CompatibilityMode,
                 "CheckForUpdates=" + CheckForUpdates,
                 "AskForUpdateCheckOnStart=" + AskForUpdateCheckOnStart,
                 "LastUpdateCheckUtcTicks=" + LastUpdateCheckUtcTicks,
@@ -842,12 +907,14 @@ namespace Panda
         private readonly TextBox defaultShiftSequenceTextBox = new TextBox();
         private readonly ComboBox interfaceStyleComboBox = new ComboBox();
         private readonly CheckBox confirmationCheckBox = new CheckBox();
+        private readonly CheckBox compatibilityModeCheckBox = new CheckBox();
         private readonly CheckBox updateCheckBox = new CheckBox();
         private readonly CheckBox askForUpdateCheckBox = new CheckBox();
 
         public string DefaultShiftSequence { get; private set; }
         public string InterfaceStyle { get { return interfaceStyleComboBox.SelectedIndex == 1 ? "Classic" : "Metro"; } }
         public bool ConfirmBeforeShift { get { return confirmationCheckBox.Checked; } }
+        public bool CompatibilityMode { get { return compatibilityModeCheckBox.Checked; } }
         public bool CheckForUpdates { get { return updateCheckBox.Checked; } }
         public bool AskForUpdateCheckOnStart { get { return askForUpdateCheckBox.Checked; } }
 
@@ -902,7 +969,7 @@ namespace Panda
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 11,
+                RowCount = 12,
                 BackColor = Color.White,
                 Padding = new Padding(18, 14, 18, 14),
                 Margin = new Padding(0, 0, 0, 12)
@@ -912,6 +979,7 @@ namespace Panda
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+            card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
@@ -950,13 +1018,20 @@ namespace Panda
             confirmationCheckBox.Anchor = AnchorStyles.Left;
             card.SetColumnSpan(confirmationCheckBox, 2);
             card.Controls.Add(confirmationCheckBox, 0, 3);
+            compatibilityModeCheckBox.Text = "Kompatibilitätsmodus: Ä, Ö, Ü und ß zusätzlich in Ae, Oe, Ue und ss umwandeln";
+            compatibilityModeCheckBox.Checked = settings.CompatibilityMode;
+            compatibilityModeCheckBox.AutoSize = true;
+            compatibilityModeCheckBox.ForeColor = Navy;
+            compatibilityModeCheckBox.Anchor = AnchorStyles.Left;
+            card.SetColumnSpan(compatibilityModeCheckBox, 2);
+            card.Controls.Add(compatibilityModeCheckBox, 0, 4);
             updateCheckBox.Text = "Automatische Updateprüfung aktivieren (höchstens einmal täglich)";
             updateCheckBox.Checked = settings.CheckForUpdates;
             updateCheckBox.AutoSize = true;
             updateCheckBox.ForeColor = Navy;
             updateCheckBox.Anchor = AnchorStyles.Left;
             card.SetColumnSpan(updateCheckBox, 2);
-            card.Controls.Add(updateCheckBox, 0, 5);
+            card.Controls.Add(updateCheckBox, 0, 6);
             askForUpdateCheckBox.Text = "Stattdessen bei jedem Programmstart vorher nachfragen";
             askForUpdateCheckBox.Checked = settings.AskForUpdateCheckOnStart;
             askForUpdateCheckBox.AutoSize = true;
@@ -964,7 +1039,7 @@ namespace Panda
             askForUpdateCheckBox.Anchor = AnchorStyles.Left;
             askForUpdateCheckBox.Margin = new Padding(22, 3, 3, 3);
             card.SetColumnSpan(askForUpdateCheckBox, 2);
-            card.Controls.Add(askForUpdateCheckBox, 0, 6);
+            card.Controls.Add(askForUpdateCheckBox, 0, 7);
             updateCheckBox.CheckedChanged += delegate { RefreshUpdateFrequencyState(); };
             RefreshUpdateFrequencyState();
             var designLabel = new Label
@@ -976,14 +1051,14 @@ namespace Panda
                 Anchor = AnchorStyles.Left
             };
             card.SetColumnSpan(designLabel, 2);
-            card.Controls.Add(designLabel, 0, 8);
+            card.Controls.Add(designLabel, 0, 9);
             interfaceStyleComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
             interfaceStyleComboBox.Items.AddRange(new object[] { "Metro (neu)", "Klassisch (Backup)" });
             interfaceStyleComboBox.SelectedIndex = string.Equals(settings.InterfaceStyle, "Classic", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             interfaceStyleComboBox.Dock = DockStyle.Fill;
             interfaceStyleComboBox.Margin = new Padding(0, 4, 0, 4);
             card.SetColumnSpan(interfaceStyleComboBox, 2);
-            card.Controls.Add(interfaceStyleComboBox, 0, 9);
+            card.Controls.Add(interfaceStyleComboBox, 0, 10);
             var designNote = new Label
             {
                 Text = "Das gewählte Design wird nach dem Speichern sofort angewendet.",
@@ -992,7 +1067,7 @@ namespace Panda
                 Anchor = AnchorStyles.Left
             };
             card.SetColumnSpan(designNote, 2);
-            card.Controls.Add(designNote, 0, 10);
+            card.Controls.Add(designNote, 0, 11);
             root.Controls.Add(card, 0, 1);
 
             var footer = new TableLayoutPanel
@@ -1114,6 +1189,1011 @@ namespace Panda
         }
     }
 
+    internal sealed class ColumnLayoutItem
+    {
+        public int OriginalIndex;
+        public string SourceName;
+        public string TargetName;
+
+        public ColumnLayoutItem(int originalIndex, string sourceName, string targetName)
+        {
+            OriginalIndex = originalIndex;
+            SourceName = sourceName ?? string.Empty;
+            TargetName = targetName ?? string.Empty;
+        }
+    }
+
+    internal sealed class ColumnMapping
+    {
+        public string SourceName;
+        public string TargetName;
+
+        public ColumnMapping(string sourceName, string targetName)
+        {
+            SourceName = sourceName ?? string.Empty;
+            TargetName = targetName ?? string.Empty;
+        }
+    }
+
+    internal sealed class ExportColumnDefinition
+    {
+        internal int SourceIndex;
+        internal string ExportName;
+
+        internal ExportColumnDefinition(int sourceIndex, string exportName)
+        {
+            SourceIndex = sourceIndex;
+            ExportName = exportName ?? string.Empty;
+        }
+    }
+
+    internal static class ExportProjection
+    {
+        internal static List<List<string>> ProjectRows(IEnumerable<IList<string>> rows, IList<int> sourceIndices)
+        {
+            var result = new List<List<string>>();
+            foreach (IList<string> sourceRow in rows ?? Enumerable.Empty<IList<string>>())
+            {
+                var targetRow = new List<string>();
+                foreach (int sourceIndex in sourceIndices ?? new int[0])
+                    targetRow.Add(sourceIndex >= 0 && sourceRow != null && sourceIndex < sourceRow.Count ? sourceRow[sourceIndex] ?? string.Empty : string.Empty);
+                result.Add(targetRow);
+            }
+            return result;
+        }
+    }
+
+    internal static class ColumnNameRules
+    {
+        internal static bool TryValidate(IEnumerable<string> names, out string errorMessage)
+        {
+            var normalized = (names ?? Enumerable.Empty<string>()).Select(name => (name ?? string.Empty).Trim()).ToList();
+            if (normalized.Any(string.IsNullOrWhiteSpace))
+            {
+                errorMessage = "Spaltennamen dürfen nicht leer sein.";
+                return false;
+            }
+            string duplicate = normalized
+                .GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .FirstOrDefault();
+            if (!string.IsNullOrEmpty(duplicate))
+            {
+                errorMessage = "Der Spaltenname „" + duplicate + "“ ist mehrfach vorhanden.";
+                return false;
+            }
+            errorMessage = string.Empty;
+            return true;
+        }
+    }
+
+    internal static class ColumnLayoutEngine
+    {
+        internal static List<List<string>> ReorderRows(IEnumerable<IList<string>> rows, IList<int> order)
+        {
+            if (order == null || order.Count == 0 || order.Distinct().Count() != order.Count || order.Any(index => index < 0))
+                throw new ArgumentException("Die Spaltenreihenfolge ist ungültig.", "order");
+            var result = new List<List<string>>();
+            foreach (IList<string> sourceRow in rows ?? Enumerable.Empty<IList<string>>())
+            {
+                var row = new List<string>();
+                foreach (int index in order)
+                    row.Add(sourceRow != null && index < sourceRow.Count ? sourceRow[index] ?? string.Empty : string.Empty);
+                result.Add(row);
+            }
+            return result;
+        }
+
+        internal static int RemapColumnIndex(IList<int> order, int previousIndex)
+        {
+            return order == null ? -1 : order.IndexOf(previousIndex);
+        }
+    }
+
+    internal static class ColumnMappingStore
+    {
+        internal static void Save(string path, IEnumerable<ColumnMapping> mappings)
+        {
+            var document = new CsvDocument { Delimiter = ';', FirstRowIsHeader = true };
+            document.Headers.AddRange(new[] { "Quelle", "Ziel" });
+            foreach (ColumnMapping mapping in mappings ?? Enumerable.Empty<ColumnMapping>())
+                document.Rows.Add(new List<string> { mapping.SourceName, mapping.TargetName });
+            CsvCodec.Save(path, document, document.Rows.Select(row => (IList<string>)row).ToList());
+        }
+
+        internal static void SaveExportPattern(string path, IList<string> sourceHeaders, IEnumerable<ExportColumnDefinition> columns)
+        {
+            var document = new CsvDocument { Delimiter = ';', FirstRowIsHeader = true };
+            document.Headers.AddRange(new[] { "Quelle", "Ziel", "Exportposition" });
+            int position = 1;
+            foreach (ExportColumnDefinition column in columns ?? Enumerable.Empty<ExportColumnDefinition>())
+            {
+                string sourceName = column.SourceIndex >= 0 && sourceHeaders != null && column.SourceIndex < sourceHeaders.Count
+                    ? sourceHeaders[column.SourceIndex] ?? string.Empty
+                    : string.Empty;
+                document.Rows.Add(new List<string> { sourceName, column.ExportName, position.ToString() });
+                position++;
+            }
+            CsvCodec.Save(path, document, document.Rows.Select(row => (IList<string>)row).ToList());
+        }
+
+        internal static List<ColumnMapping> Load(string path)
+        {
+            CsvDocument document = CsvCodec.Load(path, true);
+            return ReadMappings(document);
+        }
+
+        internal static ExportPatternDefinition LoadExportPattern(string path)
+        {
+            CsvDocument document = CsvCodec.Load(path, true);
+            bool isMappingFile = document.Headers.Count >= 2
+                && string.Equals(document.Headers[0].Trim(), "Quelle", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(document.Headers[1].Trim(), "Ziel", StringComparison.OrdinalIgnoreCase);
+            if (isMappingFile)
+            {
+                bool isOrderedMapping = document.Headers.Count >= 3
+                    && string.Equals(document.Headers[2].Trim(), "Exportposition", StringComparison.OrdinalIgnoreCase);
+                List<ColumnMapping> mappings = isOrderedMapping ? ReadOrderedExportMappings(document) : ReadMappings(document);
+                return new ExportPatternDefinition(mappings, null, document.Rows.Count, isOrderedMapping);
+            }
+
+            var headerNames = document.Headers.Select(header => (header ?? string.Empty).Trim()).ToList();
+            string errorMessage;
+            if (headerNames.Count == 0)
+                throw new InvalidDataException("Die CSV-Datei enthält keine Kopfzeile.");
+            if (!ColumnNameRules.TryValidate(headerNames, out errorMessage))
+                throw new InvalidDataException("Die Kopfzeile ist ungültig: " + errorMessage);
+            return new ExportPatternDefinition(null, headerNames, document.Rows.Count, false);
+        }
+
+        private static List<ColumnMapping> ReadOrderedExportMappings(CsvDocument document)
+        {
+            var mappings = document.Rows
+                .Select((row, index) => new
+                {
+                    Row = row,
+                    Position = ParseExportPosition(row, index + 1)
+                })
+                .Where(item => item.Row.Count >= 2 && !string.IsNullOrWhiteSpace(item.Row[1]))
+                .OrderBy(item => item.Position)
+                .Select(item => new ColumnMapping(item.Row[0].Trim(), item.Row[1].Trim()))
+                .ToList();
+            if (mappings.Count == 0)
+                throw new InvalidDataException("Das Exportmuster enthält keine gültigen Zielspalten.");
+            return mappings;
+        }
+
+        private static int ParseExportPosition(IList<string> row, int fallback)
+        {
+            int position;
+            return row.Count >= 3 && int.TryParse(row[2], out position) && position > 0 ? position : fallback;
+        }
+
+        private static List<ColumnMapping> ReadMappings(CsvDocument document)
+        {
+            var mappings = document.Rows
+                .Where(row => row.Count >= 2 && !string.IsNullOrWhiteSpace(row[0]) && !string.IsNullOrWhiteSpace(row[1]))
+                .Select(row => new ColumnMapping(row[0].Trim(), row[1].Trim()))
+                .ToList();
+            if (mappings.Count == 0)
+                throw new InvalidDataException("Die Mapping-Datei enthält keine gültigen Zuordnungen.");
+            return mappings;
+        }
+
+        internal static int Apply(IList<ColumnLayoutItem> items, IEnumerable<ColumnMapping> mappings)
+        {
+            int applied = 0;
+            foreach (ColumnMapping mapping in mappings ?? Enumerable.Empty<ColumnMapping>())
+            {
+                ColumnLayoutItem item = items.FirstOrDefault(candidate =>
+                    string.Equals(candidate.SourceName, mapping.SourceName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(candidate.TargetName, mapping.SourceName, StringComparison.OrdinalIgnoreCase));
+                if (item == null)
+                    continue;
+                item.TargetName = mapping.TargetName;
+                applied++;
+            }
+            return applied;
+        }
+    }
+
+    internal sealed class ExportPatternDefinition
+    {
+        internal readonly List<ColumnMapping> Mappings;
+        internal readonly List<string> HeaderNames;
+        internal readonly int DataRowCount;
+        internal readonly bool IsOrderedMapping;
+
+        internal bool IsHeaderTemplate { get { return HeaderNames != null; } }
+
+        internal ExportPatternDefinition(IEnumerable<ColumnMapping> mappings, IEnumerable<string> headerNames, int dataRowCount, bool isOrderedMapping)
+        {
+            Mappings = mappings == null ? new List<ColumnMapping>() : mappings.ToList();
+            HeaderNames = headerNames == null ? null : headerNames.ToList();
+            DataRowCount = Math.Max(0, dataRowCount);
+            IsOrderedMapping = isOrderedMapping;
+        }
+    }
+
+    internal sealed class ExportColumnNamesForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly DataGridView grid = new DataGridView();
+        private readonly List<string> sourceHeaders;
+        private List<ExportColumnDefinition> columns;
+        private const string EmptyTargetText = "(nicht exportieren)";
+        private bool refreshingGrid;
+
+        public List<string> ExportHeaders { get; private set; }
+        public List<int> ExportSourceIndices { get; private set; }
+
+        internal ExportColumnNamesForm(IList<string> headers)
+            : this(headers, headers, Enumerable.Range(0, headers == null ? 0 : headers.Count).ToList())
+        {
+        }
+
+        internal ExportColumnNamesForm(IList<string> availableSourceHeaders, IList<string> exportHeaders, IList<int> exportSourceIndices)
+        {
+            sourceHeaders = (availableSourceHeaders ?? new string[0]).Select(header => header ?? string.Empty).ToList();
+            var names = (exportHeaders ?? new string[0]).Select(header => header ?? string.Empty).ToList();
+            columns = new List<ExportColumnDefinition>();
+            for (int index = 0; index < names.Count; index++)
+            {
+                int sourceIndex = exportSourceIndices != null && index < exportSourceIndices.Count
+                    ? exportSourceIndices[index]
+                    : (index < sourceHeaders.Count ? index : -1);
+                if (sourceIndex < 0 || sourceIndex >= sourceHeaders.Count)
+                    sourceIndex = -1;
+                columns.Add(new ExportColumnDefinition(sourceIndex, names[index]));
+            }
+            if (columns.Count == 0)
+                columns = sourceHeaders.Select((header, index) => new ExportColumnDefinition(index, header)).ToList();
+            SyncPublicValues();
+            Text = "PANDA – Export-Spaltennamen";
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new Size(720, 480);
+            ClientSize = new Size(820, 560);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout();
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Spaltennamen für den Export",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Die Quellspalten bleiben fest. Wähle das Mapping-Ziel; der Zielname kann angepasst werden.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            ConfigureNameGrid(grid);
+            grid.EditMode = DataGridViewEditMode.EditOnEnter;
+            grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Quellspalte",
+                ReadOnly = true,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                FillWeight = 32
+            });
+            grid.Columns.Add(new DataGridViewComboBoxColumn
+            {
+                HeaderText = "Mapping-Ziel",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                FillWeight = 38,
+                FlatStyle = FlatStyle.Flat,
+                MaxDropDownItems = 20,
+                ToolTipText = "Anklicken und tippen, um Zielspalten live zu durchsuchen."
+            });
+            grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Zielname (änderbar)",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                FillWeight = 30
+            });
+            grid.CurrentCellDirtyStateChanged += delegate
+            {
+                if (grid.IsCurrentCellDirty)
+                    grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            };
+            grid.EditingControlShowing += delegate(object sender, DataGridViewEditingControlShowingEventArgs eventArgs)
+            {
+                if (grid.CurrentCell == null || grid.CurrentCell.ColumnIndex != 1)
+                    return;
+                ConfigureTargetSearchComboBox(eventArgs.Control as ComboBox);
+            };
+            grid.CellValueChanged += delegate(object sender, DataGridViewCellEventArgs eventArgs)
+            {
+                if (refreshingGrid || eventArgs.RowIndex < 0 || eventArgs.ColumnIndex != 1)
+                    return;
+                string targetName = Convert.ToString(grid.Rows[eventArgs.RowIndex].Cells[1].Value) ?? EmptyTargetText;
+                grid.Rows[eventArgs.RowIndex].Cells[2].Value = string.Equals(targetName, EmptyTargetText, StringComparison.Ordinal) ? string.Empty : targetName;
+            };
+            grid.DataError += delegate { };
+            RefreshGrid();
+
+            var card = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.White,
+                Padding = new Padding(12),
+                Margin = new Padding(0)
+            };
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 192));
+            card.Controls.Add(grid, 0, 0);
+            var actions = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Padding = new Padding(12, 0, 0, 0),
+                BackColor = Color.White
+            };
+            Button importButton = CreatePatternButton("Exportmuster importieren");
+            Button saveButton = CreatePatternButton("Exportmuster speichern");
+            importButton.Click += delegate { ImportExportPattern(); };
+            saveButton.Click += delegate { SaveExportPattern(); };
+            actions.Controls.Add(importButton);
+            actions.Controls.Add(saveButton);
+            actions.Controls.Add(new Label
+            {
+                Text = "Mapping-Ziel anklicken und tippen: Treffer erscheinen live.\r\n\r\nQuelle/Ziel-Mapping oder Kopfzeile einer normalen CSV.",
+                ForeColor = Muted,
+                Width = 160,
+                Height = 122,
+                Margin = new Padding(0, 12, 0, 0)
+            });
+            card.Controls.Add(actions, 1, 0);
+            root.Controls.Add(card, 0, 1);
+
+            Button cancelButton;
+            Button applyButton;
+            var footer = CreateDialogFooter(out cancelButton, out applyButton);
+            applyButton.Text = "Übernehmen";
+            applyButton.Click += delegate { ConfirmNames(); };
+            root.Controls.Add(footer, 0, 2);
+            AcceptButton = applyButton;
+            CancelButton = cancelButton;
+        }
+
+        private void ConfirmNames()
+        {
+            List<ExportColumnDefinition> definitions;
+            try
+            {
+                definitions = ReadColumnsFromSourceGrid();
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, exception.Message, "Ungültige Zuordnung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(definitions.Select(column => column.ExportName), out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Spaltennamen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            columns = definitions;
+            SyncPublicValues();
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        private Button CreatePatternButton(string text)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Width = 166,
+                Height = 38,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = Navy,
+                Margin = new Padding(0, 0, 0, 10),
+                Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            return button;
+        }
+
+        private List<ExportColumnDefinition> ReadColumnsFromSourceGrid()
+        {
+            grid.EndEdit();
+            var updated = columns.Select(column => new ExportColumnDefinition(-1, column.ExportName)).ToList();
+            var usedTargets = new HashSet<int>();
+            for (int sourceIndex = 0; sourceIndex < grid.Rows.Count && sourceIndex < sourceHeaders.Count; sourceIndex++)
+            {
+                DataGridViewRow row = grid.Rows[sourceIndex];
+                string selectedTarget = (Convert.ToString(row.Cells[1].Value) ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(selectedTarget) || string.Equals(selectedTarget, EmptyTargetText, StringComparison.Ordinal))
+                    continue;
+                int targetIndex = columns.FindIndex(column => string.Equals(column.ExportName, selectedTarget, StringComparison.OrdinalIgnoreCase));
+                if (targetIndex < 0)
+                    throw new InvalidDataException("Die gewählte Zielspalte „" + selectedTarget + "“ ist nicht mehr im Exportmuster vorhanden.");
+                if (!usedTargets.Add(targetIndex))
+                    throw new InvalidDataException("Die Zielspalte „" + selectedTarget + "“ wurde mehrfach zugeordnet.");
+                updated[targetIndex].SourceIndex = sourceIndex;
+                updated[targetIndex].ExportName = (Convert.ToString(row.Cells[2].Value) ?? string.Empty).Trim();
+            }
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(updated.Select(column => column.ExportName), out errorMessage))
+                throw new InvalidDataException(errorMessage);
+            return updated;
+        }
+
+        private int ResolveSourceIndex(string sourceName)
+        {
+            if (string.IsNullOrWhiteSpace(sourceName))
+                return -1;
+            return sourceHeaders.FindIndex(header => string.Equals(header, sourceName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private string SourceNameForIndex(int sourceIndex)
+        {
+            return sourceIndex >= 0 && sourceIndex < sourceHeaders.Count ? sourceHeaders[sourceIndex] : string.Empty;
+        }
+
+        private void SyncPublicValues()
+        {
+            ExportHeaders = columns.Select(column => column.ExportName).ToList();
+            ExportSourceIndices = columns.Select(column => column.SourceIndex).ToList();
+        }
+
+        private void RefreshGrid()
+        {
+            refreshingGrid = true;
+            try
+            {
+                grid.Rows.Clear();
+                var targetColumn = grid.Columns[1] as DataGridViewComboBoxColumn;
+                if (targetColumn != null)
+                {
+                    targetColumn.Items.Clear();
+                    targetColumn.Items.Add(EmptyTargetText);
+                    foreach (ExportColumnDefinition column in columns)
+                        targetColumn.Items.Add(column.ExportName);
+                }
+                for (int sourceIndex = 0; sourceIndex < sourceHeaders.Count; sourceIndex++)
+                {
+                    int targetIndex = columns.FindIndex(column => column.SourceIndex == sourceIndex);
+                    string targetName = targetIndex >= 0 ? columns[targetIndex].ExportName : EmptyTargetText;
+                    grid.Rows.Add(sourceHeaders[sourceIndex], targetName, targetIndex >= 0 ? columns[targetIndex].ExportName : string.Empty);
+                }
+                SyncPublicValues();
+            }
+            finally
+            {
+                refreshingGrid = false;
+            }
+        }
+
+        private int ApplyExportPattern(IEnumerable<ColumnMapping> mappings)
+        {
+            columns = ReadColumnsFromSourceGrid();
+            int applied = 0;
+            foreach (ColumnMapping mapping in mappings ?? Enumerable.Empty<ColumnMapping>())
+            {
+                ExportColumnDefinition column = columns.FirstOrDefault(candidate =>
+                    string.Equals(SourceNameForIndex(candidate.SourceIndex), mapping.SourceName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(candidate.ExportName, mapping.SourceName, StringComparison.OrdinalIgnoreCase));
+                if (column == null)
+                    continue;
+                column.ExportName = mapping.TargetName;
+                applied++;
+            }
+            RefreshGrid();
+            return applied;
+        }
+
+        private int ApplyOrderedExportPattern(IEnumerable<ColumnMapping> mappings)
+        {
+            columns = (mappings ?? Enumerable.Empty<ColumnMapping>())
+                .Select(mapping => new ExportColumnDefinition(ResolveSourceIndex(mapping.SourceName), mapping.TargetName.Trim()))
+                .ToList();
+            if (columns.Count == 0)
+                throw new InvalidDataException("Das Exportmuster enthält keine Zielspalten.");
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(columns.Select(column => column.ExportName), out errorMessage))
+                throw new InvalidDataException(errorMessage);
+            RefreshGrid();
+            return columns.Count(column => column.SourceIndex >= 0);
+        }
+
+        private int ApplyExportHeaderPattern(IList<string> headerNames)
+        {
+            if (headerNames == null)
+                throw new InvalidDataException("Die CSV-Datei enthält keine Kopfzeile.");
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(headerNames, out errorMessage))
+                throw new InvalidDataException(errorMessage);
+            var usedSourceIndices = new HashSet<int>();
+            columns = new List<ExportColumnDefinition>();
+            for (int index = 0; index < headerNames.Count; index++)
+            {
+                string headerName = headerNames[index].Trim();
+                int sourceIndex = sourceHeaders.FindIndex(sourceHeader => string.Equals(sourceHeader, headerName, StringComparison.OrdinalIgnoreCase));
+                if (sourceIndex >= 0 && usedSourceIndices.Contains(sourceIndex))
+                    sourceIndex = -1;
+                if (sourceIndex < 0 && headerNames.Count == sourceHeaders.Count && index < sourceHeaders.Count && !usedSourceIndices.Contains(index))
+                    sourceIndex = index;
+                if (sourceIndex >= 0)
+                    usedSourceIndices.Add(sourceIndex);
+                columns.Add(new ExportColumnDefinition(sourceIndex, headerName));
+            }
+            RefreshGrid();
+            return columns.Count;
+        }
+
+        private void ImportExportPattern()
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Title = "Exportmuster importieren";
+                dialog.Filter = "PANDA-Exportmuster (*.csv;*.pmap)|*.csv;*.pmap|Alle Dateien (*.*)|*.*";
+                dialog.CheckFileExists = true;
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                try
+                {
+                    ExportPatternDefinition pattern = ColumnMappingStore.LoadExportPattern(dialog.FileName);
+                    if (pattern.IsHeaderTemplate)
+                    {
+                        ApplyExportHeaderPattern(pattern.HeaderNames);
+                        int assigned = columns.Count(column => column.SourceIndex >= 0);
+                        int empty = columns.Count - assigned;
+                        string ignoredRows = pattern.DataRowCount > 0
+                            ? "\r\n\r\n" + pattern.DataRowCount + " Datenzeile(n) wurden ignoriert; als Muster dient nur die Kopfzeile."
+                            : string.Empty;
+                        string assignmentHint = empty > 0
+                            ? "\r\n\r\n" + assigned + " Quellspalte(n) wurden automatisch zugeordnet. " + empty + " Zielspalte(n) bleiben leer, bis Sie für eine Quellspalte rechts ein Ziel auswählen."
+                            : "\r\n\r\nAlle Quellspalten wurden automatisch zugeordnet.";
+                        MessageBox.Show(this, columns.Count + " Zielspalten wurden aus der CSV-Kopfzeile übernommen." + assignmentHint + ignoredRows, "Exportmuster importiert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    else if (pattern.IsOrderedMapping)
+                    {
+                        int assigned = ApplyOrderedExportPattern(pattern.Mappings);
+                        MessageBox.Show(this, columns.Count + " Zielspalten wurden übernommen. " + assigned + " Quellspalte(n) sind zugeordnet.", "Exportmuster importiert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    else
+                    {
+                        int applied = ApplyExportPattern(pattern.Mappings);
+                        MessageBox.Show(this, applied + " von " + pattern.Mappings.Count + " Exportnamen wurden übernommen.", "Exportmuster importiert", MessageBoxButtons.OK, applied > 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Das Exportmuster konnte nicht importiert werden.\r\n\r\n" + exception.Message, "Import fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void SaveExportPattern()
+        {
+            List<ExportColumnDefinition> definitions;
+            try
+            {
+                definitions = ReadColumnsFromSourceGrid();
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, exception.Message, "Ungültige Zuordnung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(definitions.Select(column => column.ExportName), out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Exportnamen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            using (var dialog = new SaveFileDialog())
+            {
+                dialog.Title = "Exportmuster speichern";
+                dialog.Filter = "PANDA-Exportmuster (*.csv)|*.csv|Alle Dateien (*.*)|*.*";
+                dialog.DefaultExt = "csv";
+                dialog.AddExtension = true;
+                dialog.FileName = "PANDA-Exportmuster.csv";
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                try
+                {
+                    ColumnMappingStore.SaveExportPattern(dialog.FileName, sourceHeaders, definitions);
+                    columns = definitions;
+                    SyncPublicValues();
+                    MessageBox.Show(this, "Das Exportmuster wurde gespeichert.", "Exportmuster gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Das Exportmuster konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Speichern fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        internal void SetExportNameForTest(int index, string name)
+        {
+            int targetIndex = columns.FindIndex(column => column.SourceIndex == index);
+            if (targetIndex < 0)
+                throw new ArgumentOutOfRangeException("index");
+            columns[targetIndex].ExportName = name;
+            RefreshGrid();
+        }
+
+        internal int ApplyExportPatternForTest(IEnumerable<ColumnMapping> mappings)
+        {
+            return ApplyExportPattern(mappings);
+        }
+
+        internal int ApplyExportHeaderPatternForTest(IList<string> headerNames)
+        {
+            return ApplyExportHeaderPattern(headerNames);
+        }
+
+        internal int ApplyOrderedExportPatternForTest(IEnumerable<ColumnMapping> mappings)
+        {
+            return ApplyOrderedExportPattern(mappings);
+        }
+
+        internal void MapSourceToTargetForTest(int sourceIndex, string targetName)
+        {
+            grid.Rows[sourceIndex].Cells[1].Value = targetName;
+            grid.Rows[sourceIndex].Cells[2].Value = targetName;
+            columns = ReadColumnsFromSourceGrid();
+            RefreshGrid();
+        }
+
+        internal static void ConfigureTargetSearchComboBox(ComboBox comboBox)
+        {
+            if (comboBox == null)
+                return;
+            comboBox.DropDownStyle = ComboBoxStyle.DropDown;
+            comboBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            comboBox.AutoCompleteSource = AutoCompleteSource.ListItems;
+            comboBox.MaxDropDownItems = 20;
+        }
+
+        internal static void ConfigureNameGrid(DataGridView target)
+        {
+            target.Dock = DockStyle.Fill;
+            target.AllowUserToAddRows = false;
+            target.AllowUserToDeleteRows = false;
+            target.AllowUserToResizeRows = false;
+            target.RowHeadersVisible = false;
+            target.MultiSelect = false;
+            target.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            target.AutoGenerateColumns = false;
+            target.BackgroundColor = Color.White;
+            target.BorderStyle = BorderStyle.FixedSingle;
+            target.EnableHeadersVisualStyles = false;
+            target.ColumnHeadersHeight = 36;
+            target.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 253);
+            target.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9F);
+            target.RowTemplate.Height = 32;
+        }
+
+        internal TableLayoutPanel CreateDialogFooter(out Button cancelButton, out Button applyButton)
+        {
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Padding = new Padding(0, 12, 0, 0) };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            cancelButton = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Navy, Margin = new Padding(0) };
+            cancelButton.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            applyButton = new Button { Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Blue, ForeColor = Color.White, Margin = new Padding(0) };
+            applyButton.FlatAppearance.BorderSize = 0;
+            footer.Controls.Add(cancelButton, 1, 0);
+            footer.Controls.Add(applyButton, 3, 0);
+            return footer;
+        }
+    }
+
+    internal sealed class ColumnManagerForm : Form
+    {
+        private readonly Color Navy = Color.FromArgb(24, 38, 58);
+        private readonly Color Blue = Color.FromArgb(41, 112, 255);
+        private readonly Color Background = Color.FromArgb(244, 247, 251);
+        private readonly Color Muted = Color.FromArgb(94, 108, 128);
+        private readonly List<ColumnLayoutItem> items;
+        private readonly DataGridView grid = new DataGridView();
+
+        public List<int> ColumnOrder { get; private set; }
+        public List<string> ColumnNames { get; private set; }
+
+        internal ColumnManagerForm(IList<string> headers)
+        {
+            items = (headers ?? new string[0])
+                .Select((header, index) => new ColumnLayoutItem(index, header, header))
+                .ToList();
+            Text = "PANDA – Spalten verwalten";
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new Size(760, 540);
+            ClientSize = new Size(840, 640);
+            BackColor = Background;
+            Font = new Font("Segoe UI", 9F);
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+            BuildLayout();
+        }
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(24, 20, 24, 18),
+                BackColor = Background
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            var heading = new Panel { Dock = DockStyle.Fill };
+            heading.Controls.Add(new Label
+            {
+                Text = "Spalten verwalten",
+                Font = new Font("Segoe UI Semibold", 18F),
+                ForeColor = Navy,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            });
+            heading.Controls.Add(new Label
+            {
+                Text = "Benenne Spalten um oder verschiebe sie zusammen mit ihrem vollständigen Inhalt.",
+                ForeColor = Muted,
+                AutoSize = true,
+                Location = new Point(2, 40)
+            });
+            root.Controls.Add(heading, 0, 0);
+
+            var card = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.White,
+                Padding = new Padding(16, 14, 16, 14),
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 178));
+            ExportColumnNamesForm.ConfigureNameGrid(grid);
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Position", ReadOnly = true, Width = 70 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Bisheriger Name", ReadOnly = true, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 45 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Neuer Name", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 55 });
+            card.Controls.Add(grid, 0, 0);
+
+            var actions = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Padding = new Padding(12, 0, 0, 0),
+                BackColor = Color.White
+            };
+            Button renameButton = CreateSideButton("Namen bearbeiten");
+            Button upButton = CreateSideButton("Nach oben");
+            Button downButton = CreateSideButton("Nach unten");
+            Button importMappingButton = CreateSideButton("Mapping importieren");
+            Button saveMappingButton = CreateSideButton("Mapping speichern");
+            renameButton.Click += delegate { BeginRename(); };
+            upButton.Click += delegate { MoveSelected(-1); };
+            downButton.Click += delegate { MoveSelected(1); };
+            importMappingButton.Click += delegate { ImportMapping(); };
+            saveMappingButton.Click += delegate { SaveMapping(); };
+            actions.Controls.Add(renameButton);
+            actions.Controls.Add(upButton);
+            actions.Controls.Add(downButton);
+            actions.Controls.Add(CreateSpacer(10));
+            actions.Controls.Add(importMappingButton);
+            actions.Controls.Add(saveMappingButton);
+            card.Controls.Add(actions, 1, 0);
+            root.Controls.Add(card, 0, 1);
+
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Padding = new Padding(0, 12, 0, 0) };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+            footer.Controls.Add(new Label
+            {
+                Text = "Mapping-Dateien enthalten Quelle und Ziel als UTF-8-CSV.",
+                ForeColor = Muted,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 0);
+            var cancelButton = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
+            StyleSecondaryButton(cancelButton);
+            footer.Controls.Add(cancelButton, 1, 0);
+            var applyButton = new Button { Text = "Übernehmen" };
+            StylePrimaryButton(applyButton);
+            applyButton.Click += delegate { ConfirmLayout(); };
+            footer.Controls.Add(applyButton, 3, 0);
+            root.Controls.Add(footer, 0, 2);
+            AcceptButton = applyButton;
+            CancelButton = cancelButton;
+
+            RefreshGrid(0);
+        }
+
+        private Button CreateSideButton(string text)
+        {
+            var button = new Button { Text = text, Width = 150, Height = 36, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Navy, Margin = new Padding(0, 0, 0, 8), Cursor = Cursors.Hand };
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+            return button;
+        }
+
+        private static Panel CreateSpacer(int height)
+        {
+            return new Panel { Width = 150, Height = height, Margin = new Padding(0) };
+        }
+
+        private void StylePrimaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Blue;
+            button.ForeColor = Color.White;
+            button.Margin = new Padding(0);
+            button.FlatAppearance.BorderSize = 0;
+        }
+
+        private void StyleSecondaryButton(Button button)
+        {
+            button.Dock = DockStyle.Fill;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = Color.White;
+            button.ForeColor = Navy;
+            button.Margin = new Padding(0);
+            button.FlatAppearance.BorderColor = Color.FromArgb(206, 216, 230);
+        }
+
+        private void SyncNamesFromGrid()
+        {
+            grid.EndEdit();
+            for (int index = 0; index < items.Count && index < grid.Rows.Count; index++)
+                items[index].TargetName = (Convert.ToString(grid.Rows[index].Cells[2].Value) ?? string.Empty).Trim();
+        }
+
+        private void RefreshGrid(int selectedIndex)
+        {
+            grid.Rows.Clear();
+            for (int index = 0; index < items.Count; index++)
+                grid.Rows.Add(index + 1, items[index].SourceName, items[index].TargetName);
+            if (grid.Rows.Count > 0)
+            {
+                int bounded = Math.Max(0, Math.Min(selectedIndex, grid.Rows.Count - 1));
+                grid.CurrentCell = grid.Rows[bounded].Cells[2];
+                grid.Rows[bounded].Selected = true;
+            }
+        }
+
+        private void BeginRename()
+        {
+            if (grid.CurrentRow == null)
+                return;
+            grid.CurrentCell = grid.CurrentRow.Cells[2];
+            grid.BeginEdit(true);
+        }
+
+        private void MoveSelected(int direction)
+        {
+            if (grid.CurrentRow == null)
+                return;
+            SyncNamesFromGrid();
+            int current = grid.CurrentRow.Index;
+            int target = current + direction;
+            if (target < 0 || target >= items.Count)
+                return;
+            ColumnLayoutItem item = items[current];
+            items.RemoveAt(current);
+            items.Insert(target, item);
+            RefreshGrid(target);
+        }
+
+        private void ImportMapping()
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Title = "Spalten-Mapping importieren";
+                dialog.Filter = "PANDA-Mapping (*.csv;*.pmap)|*.csv;*.pmap|Alle Dateien (*.*)|*.*";
+                dialog.CheckFileExists = true;
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                try
+                {
+                    SyncNamesFromGrid();
+                    List<ColumnMapping> mappings = ColumnMappingStore.Load(dialog.FileName);
+                    int applied = ColumnMappingStore.Apply(items, mappings);
+                    RefreshGrid(grid.CurrentRow == null ? 0 : grid.CurrentRow.Index);
+                    MessageBox.Show(this, applied + " von " + mappings.Count + " Zuordnungen wurden übernommen.", "Mapping importiert", MessageBoxButtons.OK, applied > 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Das Mapping konnte nicht importiert werden.\r\n\r\n" + exception.Message, "Import fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void SaveMapping()
+        {
+            SyncNamesFromGrid();
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(items.Select(item => item.TargetName), out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Spaltennamen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            using (var dialog = new SaveFileDialog())
+            {
+                dialog.Title = "Spalten-Mapping speichern";
+                dialog.Filter = "PANDA-Mapping (*.csv)|*.csv|Alle Dateien (*.*)|*.*";
+                dialog.DefaultExt = "csv";
+                dialog.AddExtension = true;
+                dialog.FileName = "PANDA-Spaltenmapping.csv";
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                try
+                {
+                    ColumnMappingStore.Save(dialog.FileName, items.Select(item => new ColumnMapping(item.SourceName, item.TargetName)));
+                    MessageBox.Show(this, "Das Spalten-Mapping wurde gespeichert.", "Mapping gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, "Das Mapping konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Speichern fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void ConfirmLayout()
+        {
+            SyncNamesFromGrid();
+            string errorMessage;
+            if (!ColumnNameRules.TryValidate(items.Select(item => item.TargetName), out errorMessage))
+            {
+                MessageBox.Show(this, errorMessage, "Ungültige Spaltennamen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            ColumnOrder = items.Select(item => item.OriginalIndex).ToList();
+            ColumnNames = items.Select(item => item.TargetName.Trim()).ToList();
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+    }
+
     internal sealed class ExportOptionsForm : Form
     {
         private readonly Color Navy = Color.FromArgb(24, 38, 58);
@@ -1121,6 +2201,7 @@ namespace Panda
         private readonly Color Background = Color.FromArgb(244, 247, 251);
         private readonly Color Muted = Color.FromArgb(94, 108, 128);
         private readonly Color Green = Color.FromArgb(29, 132, 88);
+        private readonly List<string> sourceHeaders;
         private readonly IList<IList<string>> rows;
         private readonly HashSet<int> changedRows;
         private readonly HashSet<int> initialRows;
@@ -1133,16 +2214,22 @@ namespace Panda
         private readonly Button selectAllButton = new Button();
         private readonly Button selectNoneButton = new Button();
         private readonly Button selectChangedButton = new Button();
+        private readonly Button editHeadersButton = new Button();
         private readonly Button continueButton = new Button();
         private readonly Label summaryLabel = new Label();
 
         public List<int> SelectedRowIndices { get; private set; }
+        public List<string> ExportHeaders { get; private set; }
+        public List<int> ExportSourceIndices { get; private set; }
 
         public ExportOptionsForm(IList<string> headers, IList<IList<string>> rows, IEnumerable<int> changedRows, IEnumerable<int> initiallySelectedRows)
         {
             this.rows = rows;
+            sourceHeaders = (headers ?? new string[0]).Select(header => header ?? string.Empty).ToList();
             this.changedRows = new HashSet<int>(changedRows ?? Enumerable.Empty<int>());
             this.initialRows = new HashSet<int>(initiallySelectedRows ?? Enumerable.Empty<int>());
+            ExportHeaders = sourceHeaders.ToList();
+            ExportSourceIndices = Enumerable.Range(0, sourceHeaders.Count).ToList();
             Text = "PANDA – CSV-Export";
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(680, 600);
@@ -1310,11 +2397,13 @@ namespace Panda
             var footer = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 6,
                 RowCount = 1,
                 Padding = new Padding(0, 12, 0, 0)
             };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
@@ -1324,13 +2413,17 @@ namespace Panda
             summaryLabel.Dock = DockStyle.Fill;
             summaryLabel.TextAlign = ContentAlignment.MiddleLeft;
             footer.Controls.Add(summaryLabel, 0, 0);
+            editHeadersButton.Text = "Exportmuster / Mapping";
+            StyleSecondaryButton(editHeadersButton);
+            editHeadersButton.Click += delegate { EditExportHeaders(); };
+            footer.Controls.Add(editHeadersButton, 1, 0);
             var cancelButton = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
             StyleSecondaryButton(cancelButton);
-            footer.Controls.Add(cancelButton, 1, 0);
+            footer.Controls.Add(cancelButton, 3, 0);
             continueButton.Text = "Weiter";
             StylePrimaryButton(continueButton);
             continueButton.Click += delegate { ConfirmSelection(); };
-            footer.Controls.Add(continueButton, 3, 0);
+            footer.Controls.Add(continueButton, 5, 0);
             root.Controls.Add(footer, 0, 3);
             AcceptButton = continueButton;
             CancelButton = cancelButton;
@@ -1344,6 +2437,18 @@ namespace Panda
             radio.Anchor = AnchorStyles.Left;
             radio.Margin = new Padding(0, 6, 0, 4);
             radio.CheckedChanged += delegate { UpdateState(); };
+        }
+
+        private void EditExportHeaders()
+        {
+            using (var dialog = new ExportColumnNamesForm(sourceHeaders, ExportHeaders, ExportSourceIndices))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    ExportHeaders = dialog.ExportHeaders.ToList();
+                    ExportSourceIndices = dialog.ExportSourceIndices.ToList();
+                }
+            }
         }
 
         private string BuildRowCaption(IList<string> headers, int rowIndex)
@@ -2311,11 +3416,17 @@ namespace Panda
         {
             new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown(), new CipherNumericUpDown()
         };
+        private readonly CheckBox compatibilityModeCheckBox = new CheckBox();
         private readonly Button copyButton = new Button();
 
         internal string ResultText { get { return resultTextBox.Text; } }
 
         public QuickConversionForm(string defaultShiftSequence)
+            : this(defaultShiftSequence, false)
+        {
+        }
+
+        public QuickConversionForm(string defaultShiftSequence, bool compatibilityMode)
         {
             Text = "PANDA – Schnellumwandlung";
             StartPosition = FormStartPosition.CenterParent;
@@ -2326,10 +3437,10 @@ namespace Panda
             BackColor = Background;
             Font = new Font("Segoe UI", 9F);
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
-            BuildLayout(defaultShiftSequence);
+            BuildLayout(defaultShiftSequence, compatibilityMode);
         }
 
-        private void BuildLayout(string defaultShiftSequence)
+        private void BuildLayout(string defaultShiftSequence, bool compatibilityMode)
         {
             var root = new TableLayoutPanel
             {
@@ -2401,6 +3512,12 @@ namespace Panda
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
             footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            compatibilityModeCheckBox.Text = "Kompatibilitätsmodus";
+            compatibilityModeCheckBox.Checked = compatibilityMode;
+            compatibilityModeCheckBox.ForeColor = Navy;
+            compatibilityModeCheckBox.AutoSize = true;
+            compatibilityModeCheckBox.Anchor = AnchorStyles.Left;
+            footer.Controls.Add(compatibilityModeCheckBox, 0, 0);
             copyButton.Text = "Ergebnis kopieren";
             copyButton.Enabled = false;
             StyleSecondaryButton(copyButton);
@@ -2657,11 +3774,16 @@ namespace Panda
 
         private void ApplyShift(IList<int> amounts)
         {
-            resultTextBox.Text = ShiftValuesByLine(inputTextBox.Text, amounts);
+            resultTextBox.Text = ShiftValuesByLine(inputTextBox.Text, amounts, compatibilityModeCheckBox.Checked);
             copyButton.Enabled = resultTextBox.TextLength > 0;
         }
 
         internal static string ShiftValuesByLine(string text, IList<int> amounts)
+        {
+            return ShiftValuesByLine(text, amounts, false);
+        }
+
+        internal static string ShiftValuesByLine(string text, IList<int> amounts, bool compatibilityMode)
         {
             string source = text ?? string.Empty;
             var result = new StringBuilder(source.Length);
@@ -2670,7 +3792,8 @@ namespace Panda
             {
                 if (source[index] != '\r' && source[index] != '\n')
                     continue;
-                result.Append(LetterShifter.Shift(source.Substring(valueStart, index - valueStart), amounts));
+                string converted = LetterShifter.Shift(source.Substring(valueStart, index - valueStart), amounts);
+                result.Append(compatibilityMode ? CompatibilityConverter.ToAscii(converted) : converted);
                 result.Append(source[index]);
                 if (source[index] == '\r' && index + 1 < source.Length && source[index + 1] == '\n')
                 {
@@ -2679,7 +3802,8 @@ namespace Panda
                 }
                 valueStart = index + 1;
             }
-            result.Append(LetterShifter.Shift(source.Substring(valueStart), amounts));
+            string finalValue = LetterShifter.Shift(source.Substring(valueStart), amounts);
+            result.Append(compatibilityMode ? CompatibilityConverter.ToAscii(finalValue) : finalValue);
             return result.ToString();
         }
 
@@ -3273,6 +4397,7 @@ namespace Panda
         private readonly Label sequenceRestartHint = new Label();
         private readonly Label statusLabel = new Label();
         private readonly Label fileLabel = new Label();
+        private readonly CheckBox compatibilityModeCheckBox = new CheckBox();
         private readonly Button exportButton = new Button();
         private readonly Button resetButton = new Button();
         private readonly Button settingsButton = new Button();
@@ -3281,6 +4406,7 @@ namespace Panda
         private readonly Button quickConversionButton = new Button();
         private readonly Button clearButton = new Button();
         private readonly Button filterButton = new Button();
+        private readonly Button columnsButton = new Button();
 
         private CsvDocument document;
         private string importedPath;
@@ -3434,6 +4560,14 @@ namespace Panda
             sequenceRestartHint.AutoEllipsis = true;
             sequenceRestartHint.Margin = new Padding(8, 0, 0, 0);
 
+            compatibilityModeCheckBox.Text = "Kompatibilitätsmodus";
+            compatibilityModeCheckBox.Checked = appSettings.CompatibilityMode;
+            compatibilityModeCheckBox.ForeColor = Navy;
+            compatibilityModeCheckBox.AutoSize = false;
+            compatibilityModeCheckBox.Dock = DockStyle.Fill;
+            compatibilityModeCheckBox.TextAlign = ContentAlignment.MiddleLeft;
+            compatibilityModeCheckBox.Margin = new Padding(8, 0, 4, 0);
+
             LoadShiftConfiguration(appSettings.DefaultShiftSequence);
         }
 
@@ -3454,12 +4588,14 @@ namespace Panda
         {
             clearButton.Click += delegate { ClearCurrentCsv(); };
             filterButton.Click += delegate { OpenRowFilter(); };
+            columnsButton.Click += delegate { OpenColumnManager(); };
             quickConversionButton.Click += delegate { OpenQuickConversion(); };
             templatesButton.Click += delegate { OpenSelectionTemplates(); };
             settingsButton.Click += delegate { OpenSettings(); };
             updateButton.Click += delegate { CheckForUpdates(true); };
             resetButton.Click += delegate { ResetResults(); };
             exportButton.Click += delegate { ExportCsv(); };
+            compatibilityModeCheckBox.CheckedChanged += delegate { UpdateCompatibilityMode(); };
             modeSelectorHost.SimpleSelected += delegate { SetAdvancedShiftMode(false); };
             modeSelectorHost.AdvancedSelected += delegate { SetAdvancedShiftMode(true); };
         }
@@ -3516,6 +4652,8 @@ namespace Panda
             navigation.Controls.Add(clearButton);
             ConfigureMetroNavigationButton(filterButton, "Zeilen filtern");
             navigation.Controls.Add(filterButton);
+            ConfigureMetroNavigationButton(columnsButton, "Spalten verwalten");
+            navigation.Controls.Add(columnsButton);
             ConfigureMetroNavigationButton(quickConversionButton, "Schnellumwandlung");
             navigation.Controls.Add(quickConversionButton);
             ConfigureMetroNavigationButton(templatesButton, "Auswahlvorlagen");
@@ -3607,6 +4745,9 @@ namespace Panda
             Control metroValuesPanel = CreateShiftValuesInputPanel();
             commandBar.Controls.Add(metroValuesPanel, 2, 0);
             commandBar.SetColumnSpan(metroValuesPanel, 2);
+            if (compatibilityModeCheckBox.Parent != null)
+                compatibilityModeCheckBox.Parent.Controls.Remove(compatibilityModeCheckBox);
+            commandBar.Controls.Add(compatibilityModeCheckBox, 4, 0);
             var upButton = CreateButton("Hochzählen  +", Color.FromArgb(20, 153, 102), Color.White);
             upButton.Click += delegate { ApplyConfiguredShift(false); };
             commandBar.Controls.Add(upButton, 0, 1);
@@ -3745,6 +4886,9 @@ namespace Panda
             Control classicValuesPanel = CreateShiftValuesInputPanel();
             toolbar.Controls.Add(classicValuesPanel, 3, 0);
             toolbar.SetColumnSpan(classicValuesPanel, 3);
+            if (compatibilityModeCheckBox.Parent != null)
+                compatibilityModeCheckBox.Parent.Controls.Remove(compatibilityModeCheckBox);
+            toolbar.Controls.Add(compatibilityModeCheckBox, 6, 0);
 
             var upButton = CreateButton("Hochzählen  +", Color.FromArgb(29, 157, 105), Color.White);
             upButton.Click += delegate { ApplyConfiguredShift(false); };
@@ -3775,14 +4919,17 @@ namespace Panda
             filterButton.Text = "Filter";
             StyleSecondaryButton(filterButton);
             toolbar.Controls.Add(filterButton, 1, 2);
+            columnsButton.Text = "Spalten";
+            StyleSecondaryButton(columnsButton);
+            toolbar.Controls.Add(columnsButton, 2, 2);
             fileLabel.Text = "Noch keine CSV geladen";
             fileLabel.ForeColor = Muted;
             fileLabel.AutoEllipsis = true;
             fileLabel.Dock = DockStyle.Fill;
             fileLabel.TextAlign = ContentAlignment.MiddleLeft;
             fileLabel.Margin = new Padding(8, 0, 8, 0);
-            toolbar.Controls.Add(fileLabel, 2, 2);
-            toolbar.SetColumnSpan(fileLabel, 3);
+            toolbar.Controls.Add(fileLabel, 3, 2);
+            toolbar.SetColumnSpan(fileLabel, 2);
             var hint = new Label
             {
                 Text = "Tipp: Spaltenkopf anklicken; mit Strg weitere Spalten ergänzen.",
@@ -4049,12 +5196,14 @@ namespace Panda
                 appSettings.DefaultShiftSequence = dialog.DefaultShiftSequence;
                 appSettings.InterfaceStyle = dialog.InterfaceStyle;
                 appSettings.ConfirmBeforeShift = dialog.ConfirmBeforeShift;
+                appSettings.CompatibilityMode = dialog.CompatibilityMode;
                 appSettings.CheckForUpdates = dialog.CheckForUpdates;
                 appSettings.AskForUpdateCheckOnStart = dialog.AskForUpdateCheckOnStart;
                 try
                 {
                     appSettings.Save();
                     bool designChanged = !string.Equals(previousInterfaceStyle, appSettings.InterfaceStyle, StringComparison.OrdinalIgnoreCase);
+                    compatibilityModeCheckBox.Checked = appSettings.CompatibilityMode;
                     LoadShiftConfiguration(appSettings.DefaultShiftSequence);
                     if (designChanged)
                         ApplyInterfaceStyle(appSettings.InterfaceStyle);
@@ -4071,8 +5220,25 @@ namespace Panda
 
         private void OpenQuickConversion()
         {
-            using (var dialog = new QuickConversionForm(ShiftSequence.Format(GetConfiguredShiftValues())))
+            using (var dialog = new QuickConversionForm(ShiftSequence.Format(GetConfiguredShiftValues()), compatibilityModeCheckBox.Checked))
                 dialog.ShowDialog(this);
+        }
+
+        private void UpdateCompatibilityMode()
+        {
+            appSettings.CompatibilityMode = compatibilityModeCheckBox.Checked;
+            try
+            {
+                appSettings.Save();
+                statusLabel.Text = compatibilityModeCheckBox.Checked
+                    ? "Kompatibilitätsmodus aktiv: Ä, Ö, Ü und ß werden bei künftigen Umwandlungen zusätzlich ersetzt."
+                    : "Kompatibilitätsmodus deaktiviert.";
+                statusLabel.ForeColor = compatibilityModeCheckBox.Checked ? Color.FromArgb(188, 118, 24) : Muted;
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, "Der Kompatibilitätsmodus konnte nicht gespeichert werden.\r\n\r\n" + exception.Message, "Einstellung nicht gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         private void ApplyInterfaceStyle(string interfaceStyle)
@@ -4416,6 +5582,54 @@ namespace Panda
             }
         }
 
+        private void OpenColumnManager()
+        {
+            if (document == null)
+            {
+                ShowCsvRequiredMessage("Spalten verwalten");
+                return;
+            }
+            List<IList<string>> resultRows = GetResultRows();
+            using (var dialog = new ColumnManagerForm(document.Headers))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                    ApplyColumnLayout(dialog.ColumnOrder, dialog.ColumnNames, resultRows);
+            }
+        }
+
+        private void ApplyColumnLayout(IList<int> order, IList<string> names, IList<IList<string>> previousResultRows)
+        {
+            if (document == null || order == null || names == null || order.Count != document.Headers.Count || names.Count != document.Headers.Count
+                || order.Distinct().Count() != order.Count || order.Any(index => index < 0 || index >= document.Headers.Count))
+                throw new InvalidOperationException("Die Spaltenänderung ist unvollständig.");
+
+            var checkedRows = new HashSet<int>(originalGrid.Rows.Cast<DataGridViewRow>()
+                .Where(row => row.Tag is bool && (bool)row.Tag)
+                .Select(row => row.Index));
+            int previousFilterColumn = activeRowFilter == null ? -1 : activeRowFilter.ColumnIndex;
+            List<List<string>> reorderedOriginal = ColumnLayoutEngine.ReorderRows(document.Rows.Select(row => (IList<string>)row), order);
+            List<List<string>> reorderedResults = ColumnLayoutEngine.ReorderRows(previousResultRows, order);
+            document.Headers = names.Select(name => name.Trim()).ToList();
+            document.Rows = reorderedOriginal;
+
+            if (activeRowFilter != null)
+            {
+                int newFilterColumn = ColumnLayoutEngine.RemapColumnIndex(order, previousFilterColumn);
+                activeRowFilter = newFilterColumn < 0
+                    ? null
+                    : new RowFilter(newFilterColumn, activeRowFilter.ExactValues, activeRowFilter.WildcardPattern);
+            }
+
+            PopulateGrids(reorderedResults.Select(row => (IList<string>)row).ToList());
+            if (activeRowFilter != null && !activeRowFilter.IsEmpty)
+                ApplyRowFilter();
+            foreach (int rowIndex in checkedRows.Where(index => index >= 0 && index < originalGrid.Rows.Count && originalGrid.Rows[index].Visible))
+                originalGrid.Rows[rowIndex].Tag = true;
+            RefreshCheckedRowSelections();
+            statusLabel.Text = "Spalten aktualisiert: " + names.Count + " Spaltennamen und ihre Reihenfolge wurden übernommen.";
+            statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
+        }
+
         private void ApplySelectionTemplate(SelectionTemplate template)
         {
             List<int> columns = SelectionTemplateStore.FindColumnIndices(document.Headers, template.Columns);
@@ -4585,6 +5799,11 @@ namespace Panda
 
         private void PopulateGrids()
         {
+            PopulateGrids(null);
+        }
+
+        private void PopulateGrids(IList<IList<string>> preservedResultRows)
+        {
             originalGrid.SuspendLayout();
             resultGrid.SuspendLayout();
             originalGrid.Columns.Clear();
@@ -4601,10 +5820,14 @@ namespace Panda
                 resultGrid.Columns[column].SortMode = DataGridViewColumnSortMode.NotSortable;
             }
 
-            foreach (var row in document.Rows)
+            for (int rowIndex = 0; rowIndex < document.Rows.Count; rowIndex++)
             {
-                originalGrid.Rows.Add(row.Cast<object>().ToArray());
-                resultGrid.Rows.Add(row.Cast<object>().ToArray());
+                List<string> originalRow = document.Rows[rowIndex];
+                IList<string> resultRow = preservedResultRows != null && rowIndex < preservedResultRows.Count
+                    ? preservedResultRows[rowIndex]
+                    : originalRow;
+                originalGrid.Rows.Add(originalRow.Cast<object>().ToArray());
+                resultGrid.Rows.Add(resultRow.Cast<object>().ToArray());
             }
 
             for (int row = 0; row < document.Rows.Count; row++)
@@ -4641,6 +5864,8 @@ namespace Panda
             if (appSettings.ConfirmBeforeShift)
             {
                 string message = BuildConfirmationMessage(sequence, countDown, cells.Count, scopeComboBox.SelectedIndex == 2);
+                if (compatibilityModeCheckBox.Checked)
+                    message += "\r\n\r\nKompatibilitätsmodus aktiv: Umlaute und ß werden zusätzlich in ASCII-Schreibweise ersetzt. Diese Ersetzung ist nicht automatisch umkehrbar.";
                 DialogResult confirmation = MessageBox.Show(this, message, "Umwandlung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
                 if (confirmation != DialogResult.Yes)
                 {
@@ -4657,13 +5882,16 @@ namespace Panda
                 var cell = resultGrid.Rows[coordinate.Item1].Cells[coordinate.Item2];
                 string before = Convert.ToString(cell.Value) ?? string.Empty;
                 string after = LetterShifter.Shift(before, signedSequence);
+                if (compatibilityModeCheckBox.Checked)
+                    after = CompatibilityConverter.ToAscii(after);
                 cell.Value = after;
                 if (!string.Equals(before, after, StringComparison.Ordinal))
                     changed++;
             }
 
             statusLabel.Text = changed + " von " + cells.Count + " Zellen verändert ("
-                + (countDown ? "runter" : "hoch") + ": " + ShiftSequence.Format(sequence) + ").";
+                + (countDown ? "runter" : "hoch") + ": " + ShiftSequence.Format(sequence) + ")"
+                + (compatibilityModeCheckBox.Checked ? " · Kompatibilitätsmodus." : ".");
             statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
         }
 
@@ -4755,11 +5983,15 @@ namespace Panda
                 initiallySelectedRows = changedRows.ToList();
 
             List<int> selectedRows;
+            List<string> exportHeaders;
+            List<int> exportSourceIndices;
             using (var options = new ExportOptionsForm(document.Headers, currentRows, changedRows, initiallySelectedRows))
             {
                 if (options.ShowDialog(this) != DialogResult.OK)
                     return;
                 selectedRows = options.SelectedRowIndices;
+                exportHeaders = options.ExportHeaders;
+                exportSourceIndices = options.ExportSourceIndices;
             }
 
             using (var dialog = new SaveFileDialog())
@@ -4776,8 +6008,17 @@ namespace Panda
 
                 try
                 {
-                    var rowsToExport = selectedRows.Select(row => currentRows[row]).ToList();
-                    CsvCodec.Save(dialog.FileName, document, rowsToExport);
+                    var selectedSourceRows = selectedRows.Select(row => currentRows[row]).ToList();
+                    var rowsToExport = ExportProjection.ProjectRows(selectedSourceRows, exportSourceIndices)
+                        .Select(row => (IList<string>)row)
+                        .ToList();
+                    var exportDocument = new CsvDocument
+                    {
+                        Headers = exportHeaders.ToList(),
+                        Delimiter = document.Delimiter,
+                        FirstRowIsHeader = document.FirstRowIsHeader
+                    };
+                    CsvCodec.Save(dialog.FileName, exportDocument, rowsToExport);
                     statusLabel.Text = "Export erfolgreich: " + selectedRows.Count + " von " + currentRows.Count + " Zeilen gespeichert.";
                     statusLabel.ForeColor = Color.FromArgb(29, 132, 88);
                     MessageBox.Show(this, selectedRows.Count + " von " + currentRows.Count + " Zeilen wurden erfolgreich gespeichert.", "Export abgeschlossen", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -4828,6 +6069,7 @@ namespace Panda
             resetButton.Enabled = enabled;
             bool enableMetroNavigation = !IsClassicDesign;
             templatesButton.Enabled = enabled || enableMetroNavigation;
+            columnsButton.Enabled = enabled || enableMetroNavigation;
             clearButton.Enabled = enabled || enableMetroNavigation;
             filterButton.Enabled = enabled || enableMetroNavigation;
             scopeComboBox.Refresh();
@@ -4906,6 +6148,36 @@ namespace Panda
         internal bool HasQuickConversionButtonInLayout
         {
             get { return quickConversionButton.Parent != null && string.Equals(quickConversionButton.Text, "Schnellumwandlung", StringComparison.Ordinal); }
+        }
+
+        internal bool HasColumnManagerButtonInLayout
+        {
+            get { return columnsButton.Parent != null; }
+        }
+
+        internal bool HasCompatibilityModeControlInLayout
+        {
+            get { return compatibilityModeCheckBox.Parent != null; }
+        }
+
+        internal IList<string> CurrentHeaders
+        {
+            get { return document == null ? new List<string>() : document.Headers.ToList(); }
+        }
+
+        internal string OriginalCellForTest(int row, int column)
+        {
+            return Convert.ToString(originalGrid.Rows[row].Cells[column].Value) ?? string.Empty;
+        }
+
+        internal string ResultCellForTest(int row, int column)
+        {
+            return Convert.ToString(resultGrid.Rows[row].Cells[column].Value) ?? string.Empty;
+        }
+
+        internal void ApplyColumnLayoutForTest(IList<int> order, IList<string> names)
+        {
+            ApplyColumnLayout(order, names, GetResultRows());
         }
 
         internal void LoadShiftConfigurationForTest(string sequenceText)

@@ -27,7 +27,7 @@ Alternativ `PANDA-Portable.exe` doppelt anklicken. Diese Einzeldatei benötigt k
 4. Im Importfenster **Importieren** anklicken.
 5. Links einzelne oder mehrere Zellen markieren. Ein Klick auf eine Spaltenüberschrift markiert die komplette Spalte; mit **Strg + Klick** lassen sich weitere Spalten ergänzen oder entfernen. Über die Checkbox neben einer Zeilennummer lässt sich die komplette Zeile auswählen. Alternativ **Alle Einträge** wählen.
 6. Zwischen **Einfach** und **Erweitert** wählen. Einfach verwendet einen Zählwert; Erweitert verwendet fünf getrennte Zählwerte. Anschließend **Hochzählen (+)** oder **Runterzählen (-)** verwenden.
-7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern. Im Exportdialog kann zwischen allen Zeilen, den ersten frei wählbaren `N` Zeilen, ausschließlich veränderten Zeilen oder einer eigenen Checkbox-Auswahl gewählt werden.
+7. Das Ergebnis rechts kontrollieren und mit **CSV exportieren** speichern. Im Exportdialog kann zwischen allen Zeilen, den ersten frei wählbaren `N` Zeilen, ausschließlich veränderten Zeilen oder einer eigenen Checkbox-Auswahl gewählt werden. Über **Exportnamen bearbeiten** lassen sich die Überschriften ausschließlich für die neue Exportdatei ändern.
 
 Mit **Leeren** wird die aktuelle CSV nach einer Sicherheitsabfrage aus PANDA entfernt, sodass eine neue Datei importiert werden kann. Die ursprüngliche Datei auf dem Datenträger wird dabei nicht gelöscht oder verändert.
 
@@ -52,6 +52,18 @@ Im Modus **Einfach** wird ein einzelner Wert zwischen 1 und 25 auf jeden Buchsta
 Bei `3-5-8-2-6` wird der erste Buchstabe um 3, der zweite um 5, der dritte um 8, der vierte um 2 und der fünfte um 6 verschoben. Danach beginnt die Folge wieder bei 3. Der Hinweis **Zählfolge beginnt je Wert neu** wird nur im erweiterten Modus angezeigt. Zahlen, Leerzeichen, Satzzeichen und Umlaute werden nicht verschoben und verbrauchen keinen Schritt der Folge. **Runterzählen** mit derselben Folge stellt den ursprünglichen Text wieder her.
 
 Beim Öffnen der Schnellumwandlung wird automatisch der Tab gewählt, der zur aktuell im Hauptfenster eingestellten Verschlüsselungsart passt.
+
+## Kompatibilitätsmodus
+
+Der direkt in beiden Hauptdesigns verfügbare **Kompatibilitätsmodus** ersetzt bei einer Umwandlung zusätzlich `ä`, `ö`, `ü` und `ß` durch `ae`, `oe`, `ue` und `ss`. Großbuchstaben werden entsprechend als `Ae`, `Oe`, `Ue` und `SS` ausgegeben. Die Option steht auch in der Schnellumwandlung und dauerhaft in den Einstellungen zur Verfügung.
+
+Die Ersetzung wird nach der Alphabetverschiebung durchgeführt. Sie ist im Gegensatz zur reinen Buchstabenverschiebung nicht automatisch umkehrbar; PANDA weist deshalb in der Bestätigungsabfrage ausdrücklich darauf hin.
+
+## Spaltenverwaltung und Mapping
+
+Über **Spalten verwalten** in der Metro-Oberfläche beziehungsweise **Spalten** im klassischen Design können Überschriften direkt umbenannt werden. Mit **Nach oben** und **Nach unten** wird eine komplette Spalte einschließlich ihrer Original- und bereits umgewandelten Ergebniswerte verschoben.
+
+Die aktuelle Zuordnung kann als UTF-8-CSV-Mapping gespeichert werden. Eine Mapping-Datei enthält die Felder `Quelle` und `Ziel` und kann später wieder importiert werden, um passende Spaltennamen automatisch zu ersetzen. Vor dem Übernehmen prüft PANDA auf leere oder doppelte Zielnamen.
 
 ## Einstellungen
 
@@ -84,13 +96,15 @@ Vor dem Speichern zeigt PANDA einen eigenen Exportdialog. Dort stehen vier Mögl
 
 Die Checkboxen im Exportdialog beeinflussen die Markierungen für die Pseudonymisierung nicht. Bereits über die Zeilencheckboxen im Hauptfenster ausgewählte Zeilen werden als Vorauswahl übernommen. Ist dort nichts ausgewählt, werden erkannte veränderte Zeilen vorausgewählt.
 
+Mit **Exportmuster / Mapping** können die Zielstruktur und Spaltenüberschriften einer Exportdatei festgelegt werden. Über **Exportmuster importieren** und **Exportmuster speichern** lassen sich die Zuordnungen als UTF-8-CSV wiederverwenden. Zusätzlich kann eine normale CSV als Exportmuster importiert werden: PANDA übernimmt deren vollständige Kopfzeile in derselben Reihenfolge und ignoriert vorhandene Datenzeilen. Die Spaltenanzahl darf von der aktuell geöffneten CSV abweichen. Im Mapping bleiben die vorhandenen **Quellspalten** links fest stehen; unter **Mapping-Ziel** wird die gewünschte Zielspalte gewählt. Das Feld kann direkt durchsucht werden und zeigt während der Eingabe passende Zielspalten als Vorschläge an. Der Zielname kann bei Bedarf zusätzlich geändert werden. Gleichnamige Spalten werden automatisch zugeordnet. Nicht zugeordnete Zielspalten werden beim Export leer ausgegeben. Gespeicherte PANDA-Exportmuster bewahren Zielreihenfolge, leere Spalten und Quellzuordnungen. Die Namen und Daten im Hauptfenster bleiben unverändert.
+
 ## Updateprüfung
 
 Über **Updates prüfen** kann jederzeit manuell nach einer neuen PANDA-Version gesucht werden. PANDA verwendet dafür ausschließlich die fest hinterlegte GitHub-API-Adresse des offiziellen Repositories und wertet nur einen numerischen Versions-Tag aus.
 
 Die Funktion lädt und startet keine Dateien. Wenn eine neuere Version verfügbar ist, kann ausschließlich die fest im Programm hinterlegte offizielle GitHub-Release-Seite im Standardbrowser geöffnet werden. Von GitHub gelieferte Download- oder Weiterleitungsadressen werden nicht übernommen.
 
-Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen, Satzzeichen und Umlaute bleiben unverändert.
+Die Buchstaben `A-Z` und `a-z` werden zyklisch verschoben. Beispiel: `Z + 1 = A` und `a - 1 = z`. Zahlen, Leerzeichen und Satzzeichen bleiben unverändert. Umlaute bleiben ohne Kompatibilitätsmodus erhalten.
 
 ## Dateien
 

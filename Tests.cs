@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 
 namespace Panda
 {
@@ -16,6 +17,7 @@ namespace Panda
             AssertEqual("Zab", LetterShifter.Shift("Abc", -1), "shift down and preserve case");
             AssertEqual("Öl 123!", LetterShifter.Shift("Öl 123!", 0), "zero shift");
             AssertEqual("Öm 123!", LetterShifter.Shift("Öl 123!", 1), "non A-Z characters unchanged");
+            AssertEqual("Aepfel, Oel, Ueber, gross", CompatibilityConverter.ToAscii("Äpfel, Öl, Über, groß"), "compatibility mode replaces umlauts and sharp s");
             var sequence = new List<int> { 3, 5, 8, 2 };
             AssertEqual("DGKFH", LetterShifter.Shift("ABCDE", sequence), "cyclic sequence shifts letters");
             AssertEqual("ABCDE", LetterShifter.Shift("DGKFH", sequence.Select(value => -value).ToList()), "cyclic sequence reverses");
@@ -84,6 +86,12 @@ namespace Panda
                 quickForm.ApplySequenceForTest("3-5-8-2-6", false);
                 AssertEqual("DGKFK\r\nDGKFK", quickForm.ResultText, "advanced quick conversion restarts cipher per line");
             }
+            using (var compatibleQuickForm = new QuickConversionForm("1", true))
+            {
+                compatibleQuickForm.SetInputText("Ärger Öl Über ß");
+                compatibleQuickForm.ApplyShiftForTest(0);
+                AssertEqual("Aerger Oel Ueber ss", compatibleQuickForm.ResultText, "quick conversion compatibility mode");
+            }
 
             string sample = "Name;Notiz\r\n\"Meyer, Anna\";\"Hallo; Welt\"\r\nBob;\"Zeile 1\r\nZeile 2\"\r\n";
             AssertEqual(';', CsvCodec.DetectDelimiter(sample), "delimiter detection");
@@ -102,10 +110,11 @@ namespace Panda
             AssertEqual("C", filtered.Headers[0], "selected column order");
             AssertEqual("a2", filtered.Rows[1][1], "selected column values");
 
-            var settings = AppSettings.Parse(new[] { "DefaultShiftSequence=3-5-8-2", "InterfaceStyle=Classic", "ConfirmBeforeShift=False", "CheckForUpdates=False", "AskForUpdateCheckOnStart=True", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
+            var settings = AppSettings.Parse(new[] { "DefaultShiftSequence=3-5-8-2", "InterfaceStyle=Classic", "ConfirmBeforeShift=False", "CompatibilityMode=True", "CheckForUpdates=False", "AskForUpdateCheckOnStart=True", "LastUpdateCheckUtcTicks=123", "LatestKnownVersion=1.7.0", "LastNotifiedVersion=v1.7.0" });
             AssertEqual("3-5-8-2", settings.DefaultShiftSequence, "settings default shift sequence");
             AssertEqual("Classic", settings.InterfaceStyle, "settings classic interface");
             AssertEqual(false, settings.ConfirmBeforeShift, "settings confirmation flag");
+            AssertEqual(true, settings.CompatibilityMode, "settings compatibility mode flag");
             AssertEqual(false, settings.CheckForUpdates, "settings update check flag");
             AssertEqual(true, settings.AskForUpdateCheckOnStart, "settings ask on start update flag");
             AssertEqual(123L, settings.LastUpdateCheckUtcTicks, "settings last update check");
@@ -114,6 +123,7 @@ namespace Panda
             AssertEqual("25", boundedSettings.DefaultShiftSequence, "legacy settings upper bound");
             AssertEqual("DefaultShiftSequence=3-5-8-2", settings.Serialize()[0], "settings sequence serialization");
             AssertEqual("InterfaceStyle=Classic", settings.Serialize()[1], "settings interface serialization");
+            AssertEqual("CompatibilityMode=True", settings.Serialize()[3], "settings compatibility serialization");
             Version parsedUpdateVersion = UpdateChecker.ParseLatestVersion("{\"tag_name\":\"v1.7.0\"}");
             AssertEqual("1.7.0", UpdateChecker.DisplayVersion(parsedUpdateVersion), "github update version parsing");
             AssertEqual(true, UpdateChecker.IsNewer(parsedUpdateVersion, new Version(1, 6, 0, 0)), "new update detected");
@@ -156,6 +166,8 @@ namespace Panda
             using (var form = new MainForm(false, "Metro"))
             {
                 form.LoadPreviewData();
+                AssertEqual(true, form.HasColumnManagerButtonInLayout, "metro design contains column manager button");
+                AssertEqual(true, form.HasCompatibilityModeControlInLayout, "metro design contains compatibility mode control");
                 AssertEqual(true, form.UsesAdvancedShiftMode, "preview uses advanced shift mode");
                 AssertEqual("3-5-8-2-6", form.CurrentShiftSequence, "advanced mode exposes five separate values");
                 AssertEqual("CHIFFRE", form.ShiftValuesCaptionText, "advanced mode uses cipher caption");
@@ -192,6 +204,10 @@ namespace Panda
                 AssertEqual(2, form.SelectedCellCount, "column selection excludes hidden rows");
                 form.ApplyFilterForTest(null);
                 AssertEqual(4, form.VisibleRowCount, "clearing filter restores rows");
+                form.ApplyColumnLayoutForTest(new[] { 3, 0, 1, 2 }, new[] { "Standort", "ID", "Vorname", "Nachname" });
+                AssertEqual("Standort", form.CurrentHeaders[0], "column manager renames and reorders header");
+                AssertEqual("Berlin", form.OriginalCellForTest(0, 0), "column manager moves original column content");
+                AssertEqual("Ejznoq", form.ResultCellForTest(0, 0), "column manager preserves and moves converted result content");
                 form.ClearDocumentForTest();
                 AssertEqual(false, form.HasLoadedDocument, "clear removes current document");
             }
@@ -200,6 +216,8 @@ namespace Panda
                 classicForm.LoadPreviewData();
                 AssertEqual(4, classicForm.VisibleRowCount, "classic backup design remains functional");
                 AssertEqual(true, classicForm.HasQuickConversionButtonInLayout, "classic design contains quick conversion button");
+                AssertEqual(true, classicForm.HasColumnManagerButtonInLayout, "classic design contains column manager button");
+                AssertEqual(true, classicForm.HasCompatibilityModeControlInLayout, "classic design contains compatibility mode control");
             }
 
             AssertEqual(20, ExportRowSelector.SelectRows(20, ExportRowMode.All, 0, null, null).Count, "export all rows");
@@ -227,6 +245,59 @@ namespace Panda
             List<int> detectedChanges = ExportRowSelector.FindChangedRows(originalExportRows, changedExportRows);
             AssertEqual(1, detectedChanges.Count, "changed export row count");
             AssertEqual(1, detectedChanges[0], "changed export row index");
+            using (var exportNamesForm = new ExportColumnNamesForm(new[] { "Kundennummer", "Büro" }))
+            {
+                exportNamesForm.SetExportNameForTest(0, "CustomerId");
+                AssertEqual("CustomerId", exportNamesForm.ExportHeaders[0], "export dialog keeps independent column name");
+                int importedExportNames = exportNamesForm.ApplyExportPatternForTest(new[] { new ColumnMapping("Büro", "Office") });
+                AssertEqual(1, importedExportNames, "export dialog imports export pattern");
+                AssertEqual("Office", exportNamesForm.ExportHeaders[1], "export pattern changes matching export name");
+                int importedHeaderNames = exportNamesForm.ApplyExportHeaderPatternForTest(new[] { "customer_id", "office" });
+                AssertEqual(2, importedHeaderNames, "export dialog imports normal CSV header pattern");
+                AssertEqual("customer_id", exportNamesForm.ExportHeaders[0], "normal CSV pattern maps headers by position");
+                int expandedHeaderNames = exportNamesForm.ApplyExportHeaderPatternForTest(new[] { "import_id", "device_key", "device_name" });
+                AssertEqual(3, expandedHeaderNames, "export dialog accepts a larger target schema");
+                AssertEqual(3, exportNamesForm.ExportHeaders.Count, "larger target schema keeps every target column");
+                AssertEqual(-1, exportNamesForm.ExportSourceIndices[0], "unmatched target column remains empty");
+                exportNamesForm.MapSourceToTargetForTest(0, "device_key");
+                AssertEqual(0, exportNamesForm.ExportSourceIndices[1], "source-centric mapping assigns source to selected target");
+                AssertEqual(-1, exportNamesForm.ExportSourceIndices[0], "source-centric mapping leaves other target empty");
+                int assignedOrderedColumns = exportNamesForm.ApplyOrderedExportPatternForTest(new[]
+                {
+                    new ColumnMapping(string.Empty, "import_id"),
+                    new ColumnMapping("Büro", "device_name")
+                });
+                AssertEqual(1, assignedOrderedColumns, "ordered export pattern restores source assignments");
+                AssertEqual(2, exportNamesForm.ExportHeaders.Count, "ordered export pattern restores target structure");
+                AssertEqual(1, exportNamesForm.ExportSourceIndices[1], "ordered export pattern resolves source column");
+            }
+            List<List<string>> projectedExportRows = ExportProjection.ProjectRows(
+                new[] { (IList<string>)new List<string> { "A", "B", "C" } },
+                new[] { 2, -1, 0 });
+            AssertEqual("C", projectedExportRows[0][0], "export projection reorders mapped source column");
+            AssertEqual(string.Empty, projectedExportRows[0][1], "export projection creates empty target column");
+            AssertEqual("A", projectedExportRows[0][2], "export projection maps final source column");
+            using (var targetSearch = new ComboBox())
+            {
+                ExportColumnNamesForm.ConfigureTargetSearchComboBox(targetSearch);
+                AssertEqual(ComboBoxStyle.DropDown, targetSearch.DropDownStyle, "mapping target search accepts typed input");
+                AssertEqual(AutoCompleteMode.SuggestAppend, targetSearch.AutoCompleteMode, "mapping target search shows live suggestions");
+                AssertEqual(AutoCompleteSource.ListItems, targetSearch.AutoCompleteSource, "mapping target search uses target columns");
+            }
+            var reorderedRows = ColumnLayoutEngine.ReorderRows(originalExportRows, new[] { 1, 0 });
+            AssertEqual("Berlin", reorderedRows[0][0], "column layout engine moves complete column content");
+            AssertEqual(1, ColumnLayoutEngine.RemapColumnIndex(new[] { 1, 0 }, 0), "column layout engine remaps filter column");
+            string columnNameError;
+            AssertEqual(true, ColumnNameRules.TryValidate(new[] { "ID", "Name" }, out columnNameError), "unique column names accepted");
+            AssertEqual(false, ColumnNameRules.TryValidate(new[] { "Name", "name" }, out columnNameError), "duplicate column names rejected");
+            var mappingItems = new List<ColumnLayoutItem>
+            {
+                new ColumnLayoutItem(0, "Vorname", "Vorname"),
+                new ColumnLayoutItem(1, "Büro", "Büro")
+            };
+            int appliedMappings = ColumnMappingStore.Apply(mappingItems, new[] { new ColumnMapping("Vorname", "FirstName"), new ColumnMapping("Büro", "Office") });
+            AssertEqual(2, appliedMappings, "column mappings applied");
+            AssertEqual("FirstName", mappingItems[0].TargetName, "column mapping changes target name");
 
             string tempPath = Path.Combine(Path.GetTempPath(), "csv-buchstaben-test-" + Guid.NewGuid().ToString("N") + ".csv");
             try
@@ -247,6 +318,52 @@ namespace Panda
             finally
             {
                 if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+
+            string mappingPath = Path.Combine(Path.GetTempPath(), "panda-mapping-test-" + Guid.NewGuid().ToString("N") + ".csv");
+            try
+            {
+                ColumnMappingStore.Save(mappingPath, new[] { new ColumnMapping("Vorname", "FirstName"), new ColumnMapping("Büro", "Office") });
+                List<ColumnMapping> loadedMappings = ColumnMappingStore.Load(mappingPath);
+                AssertEqual(2, loadedMappings.Count, "mapping template save and import count");
+                AssertEqual("Office", loadedMappings[1].TargetName, "mapping template target roundtrip");
+            }
+            finally
+            {
+                if (File.Exists(mappingPath)) File.Delete(mappingPath);
+            }
+
+            string headerPatternPath = Path.Combine(Path.GetTempPath(), "panda-export-header-test-" + Guid.NewGuid().ToString("N") + ".csv");
+            try
+            {
+                File.WriteAllText(headerPatternPath, "import_id;device_key;device_name\r\n1;A;Notebook\r\n", new System.Text.UTF8Encoding(true));
+                ExportPatternDefinition loadedPattern = ColumnMappingStore.LoadExportPattern(headerPatternPath);
+                AssertEqual(true, loadedPattern.IsHeaderTemplate, "normal CSV recognized as header export pattern");
+                AssertEqual(3, loadedPattern.HeaderNames.Count, "normal CSV header export pattern count");
+                AssertEqual("device_key", loadedPattern.HeaderNames[1], "normal CSV header export pattern value");
+                AssertEqual(1, loadedPattern.DataRowCount, "normal CSV data rows are reported as ignored");
+            }
+            finally
+            {
+                if (File.Exists(headerPatternPath)) File.Delete(headerPatternPath);
+            }
+
+            string orderedPatternPath = Path.Combine(Path.GetTempPath(), "panda-ordered-export-test-" + Guid.NewGuid().ToString("N") + ".csv");
+            try
+            {
+                ColumnMappingStore.SaveExportPattern(
+                    orderedPatternPath,
+                    new[] { "Kundennummer", "Büro" },
+                    new[] { new ExportColumnDefinition(-1, "import_id"), new ExportColumnDefinition(1, "device_name") });
+                ExportPatternDefinition loadedOrderedPattern = ColumnMappingStore.LoadExportPattern(orderedPatternPath);
+                AssertEqual(true, loadedOrderedPattern.IsOrderedMapping, "saved export pattern keeps ordered schema marker");
+                AssertEqual(2, loadedOrderedPattern.Mappings.Count, "saved export pattern keeps empty and mapped targets");
+                AssertEqual(string.Empty, loadedOrderedPattern.Mappings[0].SourceName, "saved export pattern keeps empty source");
+                AssertEqual("Büro", loadedOrderedPattern.Mappings[1].SourceName, "saved export pattern keeps assigned source");
+            }
+            finally
+            {
+                if (File.Exists(orderedPatternPath)) File.Delete(orderedPatternPath);
             }
 
             if (failures > 0)
